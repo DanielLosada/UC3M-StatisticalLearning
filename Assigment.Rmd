@@ -1,0 +1,81 @@
+---
+title: "Assigment"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("archive")
+```
+```{r}
+library(archive)
+```
+
+
+# Input data
+
+```{r}
+# Specify the file path
+rar_file <- "Training.rar"
+
+# Extract the contents
+#unpacked_files <- archive::archive_extract(rar_file)
+try(archive_extract("Training.rar"), silent = TRUE)
+```
+
+```{r}
+# Get all .jpg files in the Training folder
+image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
+
+# Loop over images and load them
+image_list <- list()
+
+# Initialize empty lists to store RGB values
+red_list <- list()
+green_list <- list()
+blue_list <- list()
+for (file in image_files) {
+  img <- OpenImageR::readImage(file)  # Load image
+  image_list[[file]] <- img  # Store in a list with filename as key
+  
+  red <- img[,,1]
+  green = img[,,2]
+  blue = img[,,3]
+  
+  red_list <- c(red_list, red)
+  green_list <- c(green_list, green)
+  blue_list <- c(blue_list, blue)
+}
+
+rgb_matrix <- cbind(unlist(red_list), unlist(green_list), unlist(blue_list))
+dim(rgb_matrix)
+```
+
+# Part A
+
+```{r}
+compute_pca <- function(data) {
+  # Compute mean for each channel
+  mean_rgb <- colMeans(data)
+  
+  # Subtract the mean from each row
+  centered_rgb_matrix <- sweep(rgb_matrix, 2, mean_rgb, FUN = "-")
+  dim(centered_rgb_matrix)
+  
+  var_cov <- (cov(centered_rgb_matrix))
+  eigen_dec <- eigen(var_cov)
+  
+  return(list(mean_obs = mean_rgb, P = eigen_dec$vectors, D = eigen_dec$values))
+}
+
+pca_results <- compute_pca(rgb_matrix)
+
+mean_obs <- pca_results$mean_obs
+P <- pca_results$P
+D <- pca_results$D
+```
+
