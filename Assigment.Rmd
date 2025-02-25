@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 install.packages("archive")
+install.packages("OpenImageR")
 ```
 ```{r}
 library(archive)
@@ -31,51 +32,53 @@ try(archive_extract("Training.rar"), silent = TRUE)
 # Get all .jpg files in the Training folder
 image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
 
-# Loop over images and load them
-image_list <- list()
+image_rows  <- list()
 
-# Initialize empty lists to store RGB values
-red_list <- list()
-green_list <- list()
-blue_list <- list()
 for (file in image_files) {
   img <- OpenImageR::readImage(file)  # Load image
-  image_list[[file]] <- img  # Store in a list with filename as key
   
-  red <- img[,,1]
-  green = img[,,2]
-  blue = img[,,3]
+  # Flatten RGB channels and concatenate into a single row
+  red <- as.vector(img[,,1])  # Flatten red channel
+  green <- as.vector(img[,,2]) # Flatten green channel
+  blue <- as.vector(img[,,3])  # Flatten blue channel
   
-  red_list <- c(red_list, red)
-  green_list <- c(green_list, green)
-  blue_list <- c(blue_list, blue)
+  # Combine R, G, B into one row and store it
+  image_rows[[file]] <- c(red, green, blue)
 }
 
-rgb_matrix <- cbind(unlist(red_list), unlist(green_list), unlist(blue_list))
-dim(rgb_matrix)
+# Convert the list of rows into a matrix
+M <- do.call(rbind, image_rows)
+
+# Check dimensions (rows = number of images, columns = total pixels * 3)
+dim(M)
 ```
+
+
 
 # Part A
 
+
 ```{r}
 compute_pca <- function(data) {
-  # Compute mean for each channel
-  mean_rgb <- colMeans(data)
+  # Compute mean
+  mean_m <- colMeans(data)
   
   # Subtract the mean from each row
-  centered_rgb_matrix <- sweep(rgb_matrix, 2, mean_rgb, FUN = "-")
-  dim(centered_rgb_matrix)
+  centered_matrix <- sweep(data, 2, mean_m, FUN = "-")
+
+  n <- nrow(centered_matrix)
+  var_cov_small <- (1 / (n - 1)) * (centered_matrix %*% t(centered_matrix))
+  eigen_dec <- eigen(var_cov_small)
   
-  var_cov <- (cov(centered_rgb_matrix))
-  eigen_dec <- eigen(var_cov)
-  
-  return(list(mean_obs = mean_rgb, P = eigen_dec$vectors, D = eigen_dec$values))
+  return(list(mean_obs = mean_m, P = eigen_dec$vectors, D = eigen_dec$values))
 }
 
-pca_results <- compute_pca(rgb_matrix)
+pca_results <- compute_pca(M)
 
 mean_obs <- pca_results$mean_obs
-P <- pca_results$P
-D <- pca_results$D
+P <- pca_results$P #eigenvectors
+D <- pca_results$D #eigenvalues
 ```
+
+
 
