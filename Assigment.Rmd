@@ -28,12 +28,39 @@ rar_file <- "Training.rar"
 try(archive_extract("Training.rar"), silent = TRUE)
 ```
 
+
+```{r}
+get_sorted_filenames <- function(){
+  # Get all .jpg files
+  image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
+  
+  
+  extract_id <- function(filename) {
+    matches <- regmatches(basename(filename), regexpr("[0-9]+", basename(filename)))
+    return(as.numeric(matches))  # Convert to numeric
+  }
+  
+  sorted_indices <- order(sapply(image_files, extract_id))
+  image_files <- image_files[sorted_indices]
+  return(image_files)
+  }
+```
+
+# Extract numeric ID from filenames (assumes ID appears before letters)
+extract_id <- function(filename) {
+  matches <- regmatches(filename, regexpr("[0-9]+", basename(filename)))
+  return(as.numeric(matches))  # Convert to numeric
+}
+
+# Sort by extracted ID
+sorted_indices <- order(sapply(image_files, extract_id))
+image_files <- image_files[sorted_indices]  # Reorder image list
+
 ```{r}
 # Get all .jpg files in the Training folder
-image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
+image_files <- get_sorted_filenames()
 
 image_rows  <- list()
-
 for (file in image_files) {
   img <- OpenImageR::readImage(file)  # Load image
   
@@ -57,6 +84,7 @@ dim(M)
 
 # Part A
 
+As we compute the small var-cov matrix, the principal components are representing the variance among images. If we were computing the var-cov matrix in the regular way, we would be representing the variance in the pixels. Anyways we obtain the same nonzero eigenvalues.
 
 ```{r}
 compute_pca <- function(data) {
@@ -70,14 +98,111 @@ compute_pca <- function(data) {
   var_cov_small <- (1 / (n - 1)) * (centered_matrix %*% t(centered_matrix))
   eigen_dec <- eigen(var_cov_small)
   
-  return(list(mean_obs = mean_m, P = eigen_dec$vectors, D = eigen_dec$values))
+  V <- t(centered_matrix) %*% eigen_dec$vectors
+  V <- apply(V, 2, function(v) v / sqrt(sum(v^2)))
+  
+  return(list(mean_obs = mean_m, P = eigen_dec$vectors, D = eigen_dec$values, V=V))
 }
 
 pca_results <- compute_pca(M)
 
 mean_obs <- pca_results$mean_obs
-P <- pca_results$P #eigenvectors
+P <- pca_results$P #eigenvectors in image space
 D <- pca_results$D #eigenvalues
+V <- pca_results$V #eigenvectors in pixel space normalized
+```
+
+Let's get the projection of the training images in the pca space
+
+```{r}
+#Y <- centered_matrix %*% V
+Y <- sweep(M, 2, mean_obs, FUN = "-") %*% V
+```
+
+Visualize the `pc` component of the `image_index` image
+
+```{r}
+visualize_pc <- function(image_index, pc, mean_obs, V, Y, img_height = 200, img_width = 180) {
+  # Extract the first principal component
+  V1 <- V[,pc]  # First principal component (size p)
+  
+  # Get the projection of the specific image onto PC1
+  y1 <- Y[image_index, 1]  # First coordinate in PCA space
+  
+  # Reconstruct only PC1 contribution
+  x_pc1 <- y1 * V1 + mean_obs
+  
+  # Reshape into image dimensions
+  image_matrix <- array(x_pc1, dim = c(img_height, img_width, 3))
+  
+  # Plot the PC1 contribution as an image
+  return(image_matrix)
+  
+}
+
+# Example: Visualizing the PC1 contribution for image x
+image_matrix <- visualize_pc(1,1, mean_obs, V, Y)
+OpenImageR::imageShow(image_matrix)
+```
+
+```{r}
+OpenImageR::writeImage(image_matrix, "output_image.png")
+utils::browseURL("output_image.png")
+```
+
+
+```{r}
+#project_image <- function(image_vector, mean_obs, V) {
+#  centered_image <- image_vector - mean_obs
+#  return(t(V) %*% centered_image)
+#}
+
+#new_image_vector <- as.vector(OpenImageR::readImage(image_files[1]))
+#y_new <- project_image(new_image_vector, mean_obs, V)
+```
+
+
+```{r}
+library(plotly)
+
+plot_pca_3d_interactive <- function(Y, image_ids) {
+  df <- data.frame(PC1 = Y[,1], PC2 = Y[,2], PC3 = Y[,3], ID = factor(image_ids))
+
+  plot_ly(df, x = ~PC1, y = ~PC2, z = ~PC3, color = ~ID, text = ~paste("ID:", ID),
+          type = "scatter3d", mode = "markers") %>%
+    layout(title = "PCA Projection (PC1 vs PC2 vs PC3)")
+}
+
+# Call the function to plot interactively
+plot_pca_3d_interactive(Y, image_ids)
+
+```
+
+
+```{r}
+compute_avg_within_distances <- function(Y, image_ids) {
+  unique_ids <- unique(image_ids)  # Get unique person IDs
+  avg_distances <- numeric(length(unique_ids))  # Store results
+  
+  for (i in seq_along(unique_ids)) {
+    person_id <- unique_ids[i]
+    indices <- which(image_ids == person_id)  # Find images of this person
+    
+    if (length(indices) > 1) {
+      # Compute all pairwise distances
+      pairwise_distances <- as.matrix(dist(Y[indices, ]))
+      avg_distances[i] <- mean(pairwise_distances[lower.tri(pairwise_distances)])  # Average of lower triangle
+    } else {
+      avg_distances[i] <- NA  # If only one image, no distance can be computed
+    }
+  }
+  
+  return(data.frame(Person = unique_ids, Avg_Distance = avg_distances))
+}
+
+image_ids <- sapply(image_files, extract_id)
+# Compute average distances for each person
+within_person_distances <- compute_avg_within_distances(Y, image_ids)
 ```
 
 
