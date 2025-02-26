@@ -56,9 +56,14 @@ extract_id <- function(filename) {
 sorted_indices <- order(sapply(image_files, extract_id))
 image_files <- image_files[sorted_indices]  # Reorder image list
 
+
 ```{r}
 # Get all .jpg files in the Training folder
 image_files <- get_sorted_filenames()
+#Remove the files
+image_files <- image_files[!image_files %in% c("Training/1AT.jpg", "Training/3BT.jpg")]
+
+image_ids <- sapply(image_files, extract_id)
 
 image_rows  <- list()
 for (file in image_files) {
@@ -111,6 +116,14 @@ P <- pca_results$P #eigenvectors in image space
 D <- pca_results$D #eigenvalues
 V <- pca_results$V #eigenvectors in pixel space normalized
 ```
+
+# Variance explained by each component
+```{r}
+for (i in seq_along(D)) {
+  cat("Principal component ", i, " explains ",D[i] / sum(D)*100, "% of the variance.\n")
+}
+```
+
 
 Let's get the projection of the training images in the pca space
 
@@ -178,8 +191,89 @@ plot_pca_3d_interactive(Y, image_ids)
 
 ```
 
+# Knn
+
+1. Take the image to classify and compute the distance to all the other images.
+2. Sort the distances by ascending order.
+3. Take the k closest samples and the id corresponding to it. 
+4. The class is the majority class among the closest neighbors.
+5. Take the average distance of k nearest neighbors and if is larger than a threshold we consider that the image does not belong to the dataset.
+
+"The best recognition results were achieved using
+the following distance measures: simplified Mahalanobis, weighted angle-based distance, proposed modified SSE-based distance, angle-based distance between whitened feature vectors."
+
+
 
 ```{r}
+project_image <- function(image_vector, mean_obs, V) {
+  centered_image <- image_vector - mean_obs
+  return(t(V) %*% centered_image)
+}
+
+#new_image_vector <- as.vector(OpenImageR::readImage(image_files[1]))
+#y_new <- project_image(new_image_vector, mean_obs, V)
+
+# Computes the distance between 2 vectors. D is the eigenvalue list, required for some metrics. 
+compute_distance <- function(x, y, D, metric) {
+    
+    if (metric == "simplified_mahalanobis") {
+      alpha <- 0.25
+      z <- sqrt(pmax(0, D / (D + alpha^2)))
+      return(-sum(z * x * y))
+      
+    } else if (metric == "weighted_angle") {
+      z <- sqrt(pmax(0, 1 / D))
+      return(-sum(z * x * y) / sqrt(sum(x^2) * sum(y^2)))
+      
+    } else if (metric == "modified_sse") {
+      return(sum((x - y)^2) / (sum(x^2) * sum(y^2)))
+      
+    } else {
+      stop("Invalid metric. Choose from 'simplified_mahalanobis', 'weighted_angle', or 'modified_sse'.")
+    }
+}
+
+knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, D){
+  # Compute distances of y_new with all rows in Y.
+  distances <- apply(Y, 1, function(y) compute_distance(y, y_new, D, metric) )
+  dist_df <- data.frame(ID = image_ids, Distance = distances)
+  
+  # Sort the distance in ascending order
+  dist_df <- dist_df[order(dist_df$Distance), ]
+  
+  # Take the first k distances
+  k_nearest <- head(dist_df, k)
+  print(k_nearest)
+  # Average distance. If distance is larger than threshold return 0. Else continue
+  avg_distance <- mean(k_nearest$Distance)
+  cat("Average distance of the ", k, " closest images is: ", avg_distance, "(",metric, ")\n")
+  if (avg_distance > threshold) {
+    return(0)
+  }
+  
+  # value count of the ids. Return the majority class.
+  id_counts <- table(k_nearest$ID)
+  majority_id <- as.numeric(names(which.max(id_counts)))
+  return(majority_id)
+}
+```
+
+```{r}
+#Test with "Training/1AT.jpg", "Training/3BT.jpg"
+new_image_vector <- as.vector(OpenImageR::readImage("Training/19BT.jpg"))
+y_new <- project_image(new_image_vector, mean_obs, V)
+
+knn_classifier(5, 100, y_new, Y, image_ids, 'weighted_angle', D)
+```
+
+
+
+# Parameter selection
+
+1. Perform a k-fold cross-validation to decide the k, the treshold, and the PCs taken, and similarity metric. We need to define a metric to maximize.
+
+```{r}
+'''
 compute_avg_within_distances <- function(Y, image_ids) {
   unique_ids <- unique(image_ids)  # Get unique person IDs
   avg_distances <- numeric(length(unique_ids))  # Store results
@@ -203,6 +297,7 @@ compute_avg_within_distances <- function(Y, image_ids) {
 image_ids <- sapply(image_files, extract_id)
 # Compute average distances for each person
 within_person_distances <- compute_avg_within_distances(Y, image_ids)
+'''
 ```
 
 
