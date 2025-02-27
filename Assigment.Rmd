@@ -43,25 +43,16 @@ get_sorted_filenames <- function(){
   sorted_indices <- order(sapply(image_files, extract_id))
   image_files <- image_files[sorted_indices]
   return(image_files)
-  }
-```
-
-# Extract numeric ID from filenames (assumes ID appears before letters)
-extract_id <- function(filename) {
-  matches <- regmatches(filename, regexpr("[0-9]+", basename(filename)))
-  return(as.numeric(matches))  # Convert to numeric
 }
 
-# Sort by extracted ID
-sorted_indices <- order(sapply(image_files, extract_id))
-image_files <- image_files[sorted_indices]  # Reorder image list
+```
 
 
 ```{r}
 # Get all .jpg files in the Training folder
 image_files <- get_sorted_filenames()
 #Remove the files
-image_files <- image_files[!image_files %in% c("Training/1AT.jpg", "Training/3BT.jpg")]
+#image_files <- image_files[!image_files %in% c("Training/1AT.jpg", "Training/3BT.jpg")]
 
 image_ids <- sapply(image_files, extract_id)
 
@@ -84,7 +75,6 @@ M <- do.call(rbind, image_rows)
 # Check dimensions (rows = number of images, columns = total pixels * 3)
 dim(M)
 ```
-
 
 
 # Part A
@@ -244,10 +234,15 @@ knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, D){
   # Take the first k distances
   k_nearest <- head(dist_df, k)
   print(k_nearest)
+  
   # Average distance. If distance is larger than threshold return 0. Else continue
-  avg_distance <- mean(k_nearest$Distance)
-  cat("Average distance of the ", k, " closest images is: ", avg_distance, "(",metric, ")\n")
-  if (avg_distance > threshold) {
+  #distance <- mean(k_nearest$Distance) # Doesn't make sense in similarity metrics that can have negative values or ranges that go   from negatives to positive. Averaging positive and negative values might cancel out the real distance.
+  
+  # Min distance: If the closest/most similar, is too far, the rest will be farther.
+  distance <- min(k_nearest$Distance)
+  cat("Min distance of the ", k, " closest images is: ", distance, "(",metric, ")\n")
+  
+  if (distance > threshold) {
     return(0)
   }
   
@@ -260,10 +255,11 @@ knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, D){
 
 ```{r}
 #Test with "Training/1AT.jpg", "Training/3BT.jpg"
+#metrics: simplified_mahalanobis, weighted_angle, modified_sse
 new_image_vector <- as.vector(OpenImageR::readImage("Training/19BT.jpg"))
 y_new <- project_image(new_image_vector, mean_obs, V)
 
-knn_classifier(5, 100, y_new, Y, image_ids, 'weighted_angle', D)
+knn_classifier(5, 100, y_new, Y, image_ids, 'modified_sse', D)
 ```
 
 
@@ -271,6 +267,234 @@ knn_classifier(5, 100, y_new, Y, image_ids, 'weighted_angle', D)
 # Parameter selection
 
 1. Perform a k-fold cross-validation to decide the k, the treshold, and the PCs taken, and similarity metric. We need to define a metric to maximize.
+
+```{r}
+image_ids[folds$Fold1]
+```
+## Threshold selection
+```{r}
+create_random_splits <- function(image_ids, percent_test = 0.2, num_splits = 5) {
+  unique_ids <- unique(image_ids)
+  
+  splits <- lapply(1:num_splits, function(i) {
+
+    test_people <- sample(unique_ids, round(length(unique_ids) * percent_test))
+    # Get indices for test and train
+    test_indices <- which(image_ids %in% test_people)
+    
+    train_people <-sample(unique_ids, round(length(unique_ids) * (1-percent_test)))
+    train_indices <- which(image_ids %in% train_people)
+    return(list(train = train_indices, test = test_indices))
+  })
+  
+  return(splits)
+}
+
+threshold_splits <- create_random_splits(image_ids)
+```
+
+```{r}
+threshold_splits[[1]]
+```
+
+
+```{r}
+Y[threshold_splits[[1]]$train,]
+```
+
+
+```{r}
+find_best_threshold <- function(Y, image_ids, metric, threshold_values, num_folds = 5, D) {
+  folds <- create_random_splits(image_ids)
+  results <- list()
+  
+  for (fold in seq_along(folds)) {
+    test_indices <- folds[[fold]]$test
+    train_indices <- folds[[fold]]$train
+    
+    Y_train <- Y[train_indices, ]  # Training projections
+    Y_test <- Y[test_indices, ]  # Test projections
+    image_ids_train <- image_ids[train_indices]
+    image_ids_test <- image_ids[test_indices]
+    
+    cat("image_ids_train: ", image_ids_train, "\n")
+    cat("image_ids_test: ", image_ids_test, "\n")
+    for (threshold in threshold_values) {
+      predictions <- sapply(1:nrow(Y_test), function(i) {
+        knn_classifier(k = 5, threshold, Y_test[i, ], Y_train, image_ids_train, metric, D)
+      })
+      
+      # Split test set into known and unknown people
+      known_mask <- image_ids_test %in% image_ids_train  # Known test samples
+      unknown_mask <- !image_ids_test %in% image_ids_train  # Unknown test samples
+      
+      # Compute accuracy for known and unknown
+      known_accuracy <- ifelse(sum(known_mask) > 0, mean(predictions[known_mask] == image_ids_test[known_mask]), NA)
+      unknown_accuracy <- ifelse(sum(unknown_mask) > 0, mean(predictions[unknown_mask] == 0), NA)
+      
+      # Compute balanced accuracy (average of both)
+      balanced_accuracy <- mean(c(known_accuracy, unknown_accuracy), na.rm = TRUE)
+      
+      # Store results
+      results <- rbind(results, data.frame(Fold = fold, Metric = metric, Threshold = threshold, 
+                                           Known_Accuracy = known_accuracy, Unknown_Accuracy = unknown_accuracy,
+                                           Balanced_Accuracy = balanced_accuracy))
+    }
+    
+  }
+  
+  return(results)
+}
+find_best_threshold(Y, image_ids, "modified_sse", seq(-10, 10, by = 0.5), 5, D)
+```
+
+
+
+```{r}
+set.seed(1)
+unique_ids <- unique(image_ids)
+# Select a percentage of people to always be unknown (not in training)
+num_unknown <- round(length(unique_ids) * 0.2)
+unknown_people <- sample(unique_ids, num_unknown)
+
+known_people <- setdiff(unique_ids, unknown_people)
+folds <- createFolds(known_people, k = 5, list = TRUE)  # K-Fold on known people
+folds
+```
+```{r}
+known_fold <- folds$Fold1
+known_indices <- which(image_ids %in% known_people[known_fold])
+known_indices
+# Get indices of the unknown people (same for all folds)
+unknown_indices <- which(image_ids %in% unknown_people)
+unknown_people
+unknown_indices
+# Combine both known and unknown into the test set
+test_indices <- c(known_indices, unknown_indices)
+test_indices
+```
+
+
+```{r}
+'''create_mixed_folds <- function(image_ids, percent_known = 0.7, k = 5) {
+  unique_ids <- unique(image_ids)  # Get unique people IDs
+  
+  # Select a percentage of people to always be unknown (not in training)
+  num_known <- round(length(unique_ids) * percent_known)
+  known_people <- sample(unique_ids, num_known)
+  cat("The shared people among folds will be: ", known_people, "\n")
+  
+  # The remaining people are used for K-Fold
+  unknown_people <- setdiff(unique_ids, known_people)
+  cat("The unique people of each fold will be ", unknown_people, "\n")
+  folds <- createFolds(unknown_people, k = k, list = TRUE)  # K-Fold on known people
+
+  fold_indices <- lapply(folds, function(unknown_fold) {
+    # Get indices of unknown people for this fold
+    unknown_indices <- which(image_ids %in% unknown_people[unknown_fold])
+    
+    # Get indices of the known people (same for all folds)
+    known_indices <- which(image_ids %in% known_people)
+
+    # Combine both known and unknown into the test set
+    combined_fold <- c(unknown_indices, known_indices)
+    
+    return(combined_fold)
+  })
+
+  return(fold_indices)  # Each fold now contains both known & unknown people
+}
+
+folds <- create_mixed_folds(image_ids)'''
+```
+
+
+```{r}
+library(caret)  
+
+create_person_based_folds <- function(image_ids, k) {
+  unique_ids <- unique(image_ids)
+  folds <- createFolds(unique_ids, k = k, list = TRUE)  # Split persons into folds
+  
+  fold_indices <- lapply(folds, function(person_fold) {
+    which(image_ids %in% unique_ids[person_fold])  # Get indices for those persons
+  })
+  
+  return(fold_indices)
+}
+
+person_folds <- create_person_based_folds(image_ids, k = 5)
+
+# We are going to find the best threshold to discriminate "outliers". People from outside the dataset
+find_best_threshold <- function(M, image_ids, metric, threshold_values, num_folds = 5) {
+  folds <- create_person_based_folds(image_ids, num_folds)
+  results <- list()
+  
+  for (fold in seq_along(folds)) {
+    test_indices <- folds[[fold]]  # Test set has unknown people only
+    train_indices <- setdiff(seq_along(image_ids), test_indices)  # Train set only contains known people
+    
+    M_train <- M[train_indices, ]  # Training images
+    M_test <- M[test_indices, ]  # Test images
+    image_ids_train <- image_ids[train_indices]
+    image_ids_test <- image_ids[test_indices]
+    
+    # Compute PCA on the training set only
+    pca_results <- compute_pca(M_train)
+    mean_obs <- pca_results$mean_obs
+    V <- pca_results$V  # Principal components in pixel space
+    D <- pca_results$D  # Eigenvalues
+
+    # Project training images into PCA space
+    centered_train <- sweep(M_train, 2, mean_obs, FUN = "-")
+    Y_train <- centered_train %*% V  # Project training images
+
+    # Project test images into PCA space
+    centered_test <- sweep(M_test, 2, mean_obs, FUN = "-")
+    Y_test <- centered_test %*% V  # Project test images
+
+    for (threshold in threshold_values) {
+      predictions <- sapply(1:nrow(Y_test), function(i) {
+        knn_classifier(k = 1, threshold, Y_test[i, ], Y_train, image_ids_train, metric, D)
+      })
+      
+      # Compute accuracy for rejecting unknowns (should return 0 for all test images)
+      true_unknowns <- rep(0, length(predictions))
+      acc <- mean(predictions == true_unknowns)
+      
+      results <- rbind(results, data.frame(Fold = fold, Metric = metric, Threshold = threshold, Accuracy = acc))
+    }
+  }
+  
+  return(results)
+}
+
+
+# Example usage
+threshold_results <- find_best_threshold(M, image_ids, metric = "simplified_mahalanobis", threshold_values = seq(-10, 10, by = 0.5))
+```
+
+
+```{r}
+library(caret)  # For stratified k-fold splitting
+
+create_folds <- function(image_ids, k) {
+  return(createFolds(image_ids, k = k, list = TRUE, returnTrain = TRUE))  # Stratified folds
+}
+
+folds <- create_folds(image_ids, 5)  # Example: 5-fold cross-validation
+folds
+```
+```{r}
+compute_balanced_accuracy <- function(y_true, y_pred) {
+  confusion <- table(y_true, y_pred)
+  sensitivity <- confusion[2, 2] / (confusion[2, 1] + confusion[2, 2])  # Recall for known people
+  specificity <- confusion[1, 1] / (confusion[1, 1] + confusion[1, 2])  # Correctly rejecting unknowns
+  return((sensitivity + specificity) / 2)  # Balanced accuracy
+}
+```
+
+
 
 ```{r}
 '''
