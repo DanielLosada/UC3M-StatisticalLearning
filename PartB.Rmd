@@ -112,40 +112,6 @@ reduced_Y <- Y[,1:10]
 reduced_Y <- cbind(reduced_Y, class = image_ids)
 ```
 
-
-```{r}
-compute_fda <- function(Y) {
-  # Y is an n x p matrix where each row is a flattened image.
-  
-  # Compute the overall mean of the data (each column is a pixel)
-  m <- colMeans(Y)
-  
-  # number of people in the dataset and which ones
-  people <- unique(reduced_Y[, "class"])
-  k <- length(people)
-  
-  # Number of observations per person
-  ni <- sapply(people, function(cl) sum(class_vector == cl))
-  
-  # Initialize matrices S_W and S_B
-  S_W <- matrix(0, ncol(Y), ncol(Y))
-  S_B <- matrix(0, ncol(Y), ncol(Y))
-  
-  for (classes in people) {
-    # Filtrar datos de la clase actual
-    Y_class <- Y[Y[, ncol(Y)] == 1, , drop = FALSE]
-    mean_class <- colMeans(Y_class)
-    mean_class <- mean_class[,-c('class')]
-    # ACUERDATE DE BORRAR LA COLUMNA CLASE.
-    
-    for (meani in mean_class){
-      S_B <- S_B + length(mean_class)*sum((meani - m)*t(meani-m))
-    }
-  }
-}
-
-```
-
 ```{r}
 fda <- function(Y) {
   # Y is an n x p matrix obtained from a PCA where the last column has to contain the class.
