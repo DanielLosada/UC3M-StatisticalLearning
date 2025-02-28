@@ -175,7 +175,7 @@ fda <- function(Y) {
 
 
 ```{r}
-fda_results <- compute_fda(reduced_Y)
+fda_results <- fda(reduced_Y)
 ```
 
 ```{r}
@@ -190,4 +190,8 @@ fisher_directions <- fda_results$P
 discriminant_power <- fda_results$D
 ```
 
-
+```{r}
+mean_face
+fisher_directions
+discriminant_power
+```
