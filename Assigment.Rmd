@@ -14,6 +14,7 @@ install.packages("OpenImageR")
 ```
 ```{r}
 library(archive)
+library(dplyr)
 ```
 
 
@@ -30,15 +31,14 @@ try(archive_extract("Training.rar"), silent = TRUE)
 
 
 ```{r}
+extract_id <- function(filename) {
+    matches <- regmatches(basename(filename), regexpr("[0-9]+", basename(filename)))
+    return(as.numeric(matches))  # Convert to numeric
+}
+
 get_sorted_filenames <- function(){
   # Get all .jpg files
   image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
-  
-  
-  extract_id <- function(filename) {
-    matches <- regmatches(basename(filename), regexpr("[0-9]+", basename(filename)))
-    return(as.numeric(matches))  # Convert to numeric
-  }
   
   sorted_indices <- order(sapply(image_files, extract_id))
   image_files <- image_files[sorted_indices]
@@ -209,6 +209,7 @@ compute_distance <- function(x, y, D, metric) {
     if (metric == "simplified_mahalanobis") {
       alpha <- 0.25
       z <- sqrt(pmax(0, D / (D + alpha^2)))
+      #cat("z: ", z)
       return(-sum(z * x * y))
       
     } else if (metric == "weighted_angle") {
@@ -224,24 +225,30 @@ compute_distance <- function(x, y, D, metric) {
 }
 
 knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, D){
+  #cat("length(y_new): ", length(y_new), '\n')
+  #cat("dim(Y): ", dim(Y), '\n')
   # Compute distances of y_new with all rows in Y.
+  #if (!is.matrix(y_new)) {
+  #  y_new <- matrix(y_new, nrow = 1)  # Force y_new to always be a matrix
+  #}
   distances <- apply(Y, 1, function(y) compute_distance(y, y_new, D, metric) )
   dist_df <- data.frame(ID = image_ids, Distance = distances)
-  
+  #cat("Distances computed: ", distances)
   # Sort the distance in ascending order
   dist_df <- dist_df[order(dist_df$Distance), ]
   
   # Take the first k distances
   k_nearest <- head(dist_df, k)
-  print(k_nearest)
+  #print(k_nearest)
   
   # Average distance. If distance is larger than threshold return 0. Else continue
   #distance <- mean(k_nearest$Distance) # Doesn't make sense in similarity metrics that can have negative values or ranges that go   from negatives to positive. Averaging positive and negative values might cancel out the real distance.
   
   # Min distance: If the closest/most similar, is too far, the rest will be farther.
   distance <- min(k_nearest$Distance)
-  cat("Min distance of the ", k, " closest images is: ", distance, "(",metric, ")\n")
-  
+  #cat("Min distance of the ", k, " closest images is: ", distance, "(",metric, ")\n")
+  #cat("Threshold: ", threshold, "\n")
+  #cat("Is distance bigger than threshold? ", distance > threshold, "\n")
   if (distance > threshold) {
     return(0)
   }
@@ -268,12 +275,60 @@ knn_classifier(5, 100, y_new, Y, image_ids, 'modified_sse', D)
 
 1. Perform a k-fold cross-validation to decide the k, the treshold, and the PCs taken, and similarity metric. We need to define a metric to maximize.
 
-```{r}
-image_ids[folds$Fold1]
-```
 ## Threshold selection
+
+
 ```{r}
-create_random_splits <- function(image_ids, percent_test = 0.2, num_splits = 5) {
+create_random_splits_by_image <- function(image_ids, percent_test = 0.2, num_splits = 5, num_people_to_exclude = 1) {
+  
+  unique_people <- unique(image_ids)  # Get unique class labels
+  
+  splits <- lapply(1:num_splits, function(i) {
+    
+    # Randomly select people to exclude from train
+    excluded_people <- sample(unique_people, num_people_to_exclude)
+    
+    # Get indices of images belonging to excluded people
+    excluded_indices <- which(image_ids %in% excluded_people)
+    
+    # Sample test images from the remaining people
+    remaining_images <- setdiff(names(image_ids), names(image_ids)[excluded_indices])  # Remove excluded images
+    test_images <- sample(remaining_images, round(length(remaining_images) * percent_test))
+    
+    # Get test and train indices
+    test_indices <- which(names(image_ids) %in% test_images)  # Normal test split
+    test_indices <- unique(c(test_indices, excluded_indices))  # Force excluded images into the test set
+    train_indices <- setdiff(seq_along(image_ids), test_indices)  # Remaining are train
+    
+    cat("\nExcluded people: ", paste(excluded_people, collapse = ", "), "\n")
+    cat("length test: ", length(test_indices), "\nlength train: ", length(train_indices), "\n")
+    
+    # Extract class labels for train and test sets
+    train_people <- unique(image_ids[train_indices])
+    test_people <- unique(image_ids[test_indices])
+    
+    # Check if any class is in test but not in train
+    missing_people <- setdiff(test_people, train_people)
+    missing_people_indices <- which(image_ids %in% missing_people)
+    
+    if (length(missing_people) > 0) {
+      cat("The following people are in the test set but not in the train set: ", paste(missing_people, collapse = ", "))
+    }
+    
+    return(list(train = train_indices, test = test_indices, missing_people = missing_people_indices))
+  })
+  
+  return(splits)
+}
+
+#splits_by_img <- create_random_splits_by_image(image_ids, num_people_to_exclude=1)
+#splits_by_img
+```
+
+
+```{r}
+#Not used
+create_random_splits_by_people <- function(image_ids, percent_test = 0.2, num_splits = 5) {
   unique_ids <- unique(image_ids)
   
   splits <- lapply(1:num_splits, function(i) {
@@ -290,22 +345,133 @@ create_random_splits <- function(image_ids, percent_test = 0.2, num_splits = 5) 
   return(splits)
 }
 
-threshold_splits <- create_random_splits(image_ids)
-```
-
-```{r}
-threshold_splits[[1]]
+#threshold_splits <- create_random_splits_by_people(image_ids)
 ```
 
 
 ```{r}
-Y[threshold_splits[[1]]$train,]
+find_best_params <- function(Y, image_ids, metrics, param_grid, num_folds = 5, D, num_people_to_exclude=1) {
+  folds <- create_random_splits_by_image(image_ids, num_splits=num_folds, num_people_to_exclude=num_people_to_exclude)
+  results <- list()
+  
+  for (fold in seq_along(folds)) {
+    test_indices <- folds[[fold]]$test
+    train_indices <- folds[[fold]]$train
+    
+    for (n_pc in param_grid$n_pcs){  
+      Y_pc <- Y[, 1:n_pc, drop = FALSE]
+      D_pc <- D[1:n_pc, drop = FALSE]
+      Y_train <- Y_pc[train_indices, , drop = FALSE]  
+      Y_test <- Y_pc[test_indices, , drop = FALSE]  
+      image_ids_train <- image_ids[train_indices]
+      image_ids_test <- image_ids[test_indices]
+      
+      cat("Fold:", fold, "\n")
+      
+      for (metric in metrics) {
+        if (!(metric %in% names(param_grid))) {
+          stop(paste("Unknown metric:", metric))
+        }
+        
+        for (k in param_grid$k_values) {
+          for (threshold in param_grid[[metric]]) {
+            
+            cat("Testing Metric:", metric, "| k:", k, "| n_pc:", n_pc, "| threshold:", threshold, "\n")
+            
+            predictions <- sapply(1:nrow(Y_test), function(i) {
+              knn_classifier(k, threshold, Y_test[i, ], Y_train, image_ids_train, metric, D_pc)
+            })
+            #print("Prediction done")
+            
+            known_mask <- image_ids_test %in% image_ids_train  
+            unknown_mask <- !image_ids_test %in% image_ids_train  
+            
+            #print("Predictions mask done")
+            
+            known_accuracy <- ifelse(sum(known_mask) > 0, mean(predictions[known_mask] == image_ids_test[known_mask]), NA)
+            unknown_accuracy <- ifelse(sum(unknown_mask) > 0, mean(predictions[unknown_mask] == 0), NA)
+            balanced_accuracy <- mean(c(known_accuracy, unknown_accuracy), na.rm = TRUE)
+            
+            results <- rbind(results, data.frame(Fold = fold, n_pcs = n_pc, Metric = metric, k = k, Threshold = threshold, 
+                                                 Known_Accuracy = known_accuracy, Unknown_Accuracy = unknown_accuracy,
+                                                 Balanced_Accuracy = balanced_accuracy))
+          }
+        }
+      }
+    }
+  }
+  
+  return(results)
+}
+
+```
+
+```{r, include=FALSE}
+param_grid_thresholds <- list(
+  n_pcs = c(30),  # Fixed n_pcs
+  k_values = c(5),  # Fixed k
+  modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold
+  simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold
+  weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold
+)
+
+results_thresholds <- find_best_params(Y, image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
+                                       param_grid=param_grid_thresholds, num_folds = 5, D, num_people_to_exclude=2)
+
+```
+
+```{r}
+results_thresholds
 ```
 
 
 ```{r}
-find_best_threshold <- function(Y, image_ids, metric, threshold_values, num_folds = 5, D) {
-  folds <- create_random_splits(image_ids)
+best_thresholds <- results_thresholds %>%
+  group_by(Metric) %>%
+  slice_max(Balanced_Accuracy, n = 1, with_ties = FALSE) %>%  # Ensures only one row per metric
+  select(Metric, Threshold, Balanced_Accuracy) %>%
+  ungroup()  # Remove grouping for a clean dataframe
+
+print(best_thresholds)
+
+best_thresholds_vector <- best_thresholds %>%
+  pull(Threshold, name = Metric)
+
+```
+
+
+```{r, include=FALSE}
+param_grid_others <- list(
+  n_pcs = seq(1, 30, by=1),
+  #n_pcs = c(4),
+  k_values = seq(1, 10, by=1),
+  #k_values = c(1),
+  modified_sse = c(best_thresholds_vector["modified_sse"]),
+  simplified_mahalanobis = c(best_thresholds_vector["simplified_mahalanobis"]),
+  weighted_angle = c(best_thresholds_vector["weighted_angle"])
+)
+
+results_final <- find_best_params(Y, image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
+                                  param_grid=param_grid_others, num_folds = 5, D, num_people_to_exclude=2)
+
+```
+
+
+
+```{r}
+# Assuming your dataframe is named results
+best_per_fold <- results_final %>%
+  group_by(Fold) %>%
+  slice_max(Balanced_Accuracy, with_ties = FALSE)  # Selects the row with the highest Balanced Accuracy
+
+# Print the results
+print(best_per_fold)
+
+```
+
+```{r}
+find_best_threshold <- function(Y, image_ids, metric, threshold_values, num_folds = 5, D, folds) {
+  #folds <- create_random_splits(image_ids)
   results <- list()
   
   for (fold in seq_along(folds)) {
@@ -345,7 +511,8 @@ find_best_threshold <- function(Y, image_ids, metric, threshold_values, num_fold
   
   return(results)
 }
-find_best_threshold(Y, image_ids, "modified_sse", seq(-10, 10, by = 0.5), 5, D)
+
+find_best_threshold(Y, image_ids, "modified_sse", seq(3e-5, 2.5e-4, by = 5e-6), 5, D, splits_by_img)
 ```
 
 
