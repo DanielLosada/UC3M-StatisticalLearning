@@ -1,0 +1,197 @@
+---
+title: "Part B"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(archive)
+```
+
+
+# Input data
+
+```{r}
+# Specify the file path
+rar_file <- "Training.rar"
+
+# Extract the contents
+#unpacked_files <- archive::archive_extract(rar_file)
+try(archive_extract("Training.rar"), silent = TRUE)
+```
+
+
+```{r}
+# Función global para extraer el ID numérico del nombre de archivo
+extract_id <- function(filename) {
+  matches <- regmatches(basename(filename), regexpr("[0-9]+", basename(filename)))
+  as.numeric(matches)
+}
+
+get_sorted_filenames <- function(){
+  # Obtener todos los archivos .jpg
+  image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
+  sorted_indices <- order(sapply(image_files, extract_id))
+  image_files[sorted_indices]
+}
+
+# Uso
+image_files <- get_sorted_filenames()
+image_ids <- sapply(image_files, extract_id)
+
+# Lectura de imágenes y creación de la matriz M
+library(OpenImageR)
+image_rows  <- list()
+for (file in image_files) {
+  img <- readImage(file)  # Cargar imagen
+  
+  # Aplanar los canales RGB y concatenarlos en una sola fila
+  red <- as.vector(img[,,1])
+  green <- as.vector(img[,,2])
+  blue <- as.vector(img[,,3])
+  
+  image_rows[[file]] <- c(red, green, blue)
+}
+
+M <- do.call(rbind, image_rows)
+dim(M)
+
+```
+# Part A
+
+As we compute the small var-cov matrix, the principal components are representing the variance among images. If we were computing the var-cov matrix in the regular way, we would be representing the variance in the pixels. Anyways we obtain the same nonzero eigenvalues.
+
+```{r}
+compute_pca <- function(data) {
+  # Compute mean
+  mean_m <- colMeans(data)
+  
+  # Subtract the mean from each row
+  centered_matrix <- sweep(data, 2, mean_m, FUN = "-")
+
+  n <- nrow(centered_matrix)
+  var_cov_small <- (1 / (n - 1)) * (centered_matrix %*% t(centered_matrix))
+  eigen_dec <- eigen(var_cov_small)
+  
+  V <- t(centered_matrix) %*% eigen_dec$vectors
+  V <- apply(V, 2, function(v) v / sqrt(sum(v^2)))
+  
+  return(list(mean_obs = mean_m, P = eigen_dec$vectors, D = eigen_dec$values, V=V))
+}
+
+pca_results <- compute_pca(M)
+
+mean_obs <- pca_results$mean_obs
+P <- pca_results$P #eigenvectors in image space
+D <- pca_results$D #eigenvalues
+V <- pca_results$V #eigenvectors in pixel space normalized
+```
+
+# Variance explained by each component
+```{r}
+for (i in seq_along(D)) {
+  cat("Principal component ", i, " explains ",D[i] / sum(D)*100, "% of the variance.\n")
+}
+```
+
+
+Let's get the projection of the training images in the pca space
+
+```{r}
+#Y <- centered_matrix %*% V
+Y <- sweep(M, 2, mean_obs, FUN = "-") %*% V
+
+```
+
+```{r}
+reduced_Y <- Y[,1:10]
+reduced_Y <- cbind(reduced_Y, class = image_ids)
+```
+
+```{r}
+fda <- function(Y) {
+  # Y is an n x p matrix obtained from a PCA where the last column has to contain the class.
+  
+  # We extract the class column and convert it to a factor
+  class_vector <- Y[, ncol(Y)]
+  class_vector <- as.factor(class_vector)
+  
+  # We extract the feature matrix (all columns except the last one)
+  X <- Y[, -ncol(Y), drop = FALSE]
+  
+  # We compute the overall mean of the features
+  m <- colMeans(X)
+  
+  # Determine the number of classes and the unique classes
+  people <- unique(class_vector)
+  
+  # We obtain the number of features (dimensions) to select the size of S_W and S_B
+  p <- ncol(X)
+  
+  # We initialize the within-class scatter matrix (S_W) and the between-class scatter matrix (S_B)
+  S_W <- matrix(0, nrow = p, ncol = p)
+  S_B <- matrix(0, nrow = p, ncol = p)
+  
+  # For each class, we compute the class mean and we accumulate contributions to S_B and S_W
+  for (cl in people) {
+    
+    # Submatrix of observations for the current class 'cl'
+    X_class <- X[class_vector == cl, , drop = FALSE]
+    n_i <- nrow(X_class)
+    
+    # We compute the mean of the current class
+    mean_class <- colMeans(X_class)
+    
+    # We update S_B for each class
+    # We perform the outer product of (mean_class - m), weighted by n_i
+    S_B <- S_B + n_i * ((mean_class - m) %*% t((mean_class - m)))
+    
+    # To Update S_W we need to access every observation j of the class one by one
+    # We create a for loop which goes through each observation to perform the
+    # sum of (x_j - mean_class)(x_j - mean_class)^T
+    for (j in 1:n_i) {
+      diff_j <- as.matrix(X_class[j, ] - mean_class)
+      S_W <- S_W + diff_j %*% t(diff_j)
+    }
+  }
+  
+  # We compute the eigenvalues and eigenvectors for the matrix solve(S_W) %*% S_B
+  eig_values <- eigen(solve(S_W) %*% S_B)
+  
+  # We obtain the sorted indices of the eigenvalues in decreasing order
+  sort_eig <- order(eig_values$values, decreasing = TRUE)
+  
+  # We sort the eigenvectors and eigenvalues according these indices
+  eigenvectors <- eig_values$vectors[, sort_eig]
+  eigenvalues <- eig_values$values[sort_eig]
+  
+  return(list(overall_mean = m, P = eigenvectors, D = eigenvalues))
+}
+```
+
+
+```{r}
+fda_results <- fda(reduced_Y)
+```
+
+```{r}
+fda_results <- compute_fda(reduced_Y)
+# The overall mean face (used for centering):
+mean_face <- fda_results$overall_mean
+
+# The matrix of Fisher discriminant directions (columns are the directions):
+fisher_directions <- fda_results$P
+
+# The eigenvalues (discriminative power for each direction):
+discriminant_power <- fda_results$D
+```
+
+```{r}
+mean_face
+fisher_directions
+discriminant_power
+```
