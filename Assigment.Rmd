@@ -16,7 +16,7 @@ install.packages("OpenImageR")
 library(archive)
 library(dplyr)
 
-COMPUTE_GRID_SEARCH <- FALSE
+COMPUTE_GRID_SEARCH <- TRUE
 ```
 
 
@@ -207,9 +207,6 @@ project_image <- function(image_vector, mean_obs, P) {
   return(t(P) %*% centered_image)
 }
 
-#new_image_vector <- as.vector(OpenImageR::readImage(image_files[1]))
-#y_new <- project_image(new_image_vector, mean_obs, V)
-
 # Computes the distance between 2 vectors. D is the eigenvalue list, required for some metrics. 
 compute_distance <- function(x, y, E, metric) {
     
@@ -231,15 +228,9 @@ compute_distance <- function(x, y, E, metric) {
 }
 
 knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
-  #cat("length(y_new): ", length(y_new), '\n')
-  #cat("dim(Y): ", dim(Y), '\n')
-  # Compute distances of y_new with all rows in Y.
-  #if (!is.matrix(y_new)) {
-  #  y_new <- matrix(y_new, nrow = 1)  # Force y_new to always be a matrix
-  #}
   distances <- apply(Y, 1, function(y) compute_distance(y, y_new, E, metric) )
   dist_df <- data.frame(ID = image_ids, Distance = distances)
-  #cat("Distances computed: ", distances)
+
   # Sort the distance in ascending order
   dist_df <- dist_df[order(dist_df$Distance), ]
 
@@ -326,7 +317,7 @@ run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_t
         cat("Testing Metric:", metric, "| k:", k, "| n_pc:", n_pc, "| threshold:", threshold, "\n")
         
         predictions <- sapply(1:nrow(Y_test), function(i) {
-          knn_classifier(k, threshold, Y_test[i, ], Y_train, image_ids_train, metric, E_pc)
+          knn_classifier(k=k, threshold=threshold, y_new=Y_test[i, ], Y=Y_train, image_ids=image_ids_train, metric=metric, E=E_pc)
         })
         
         known_mask <- image_ids_test %in% image_ids_train  
@@ -381,15 +372,15 @@ find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, n
     if (!compute_pca) metrics <- c("modified_sse")
     
     # Define the dataset to use
-    if (compute_pca) {
-      n_pcs_list <- param_grid$n_pcs  # Iterate over principal components
-    } else {
-      n_pcs_list <- list(NA)  # Placeholder, as we don't loop over n_pcs
-    }
+    #if (compute_pca) {
+    #  n_pcs_list <- param_grid$n_pcs  # Iterate over principal components
+    #} else {
+    #  n_pcs_list <- list(NA)  # Placeholder, as we don't loop over n_pcs
+    #}
     
     # Process with or without PCA
     if (compute_pca) {
-      for (n_pc in n_pcs_list) {
+      for (n_pc in param_grid$n_pcs) {
         
         Y_pc <- Y[, 1:n_pc, drop = FALSE]  # Select principal components
         E_pc <- E[1:n_pc, drop = FALSE]    # Select corresponding eigenvalues
@@ -462,8 +453,8 @@ get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_
       group_by(Metric) %>%
       summarise(
         Occurrences = n(),
-        Average_k = mean(k, na.rm = TRUE),
-        Average_n_pcs = mean(n_pcs, na.rm = TRUE),
+        Average_k = round(mean(k, na.rm = TRUE)),
+        Average_n_pcs = round(mean(n_pcs, na.rm = TRUE)),
         Average_Known_Accuracy = mean(Known_Accuracy, na.rm = TRUE),
         Average_Unknown_Accuracy = mean(Unknown_Accuracy, na.rm = TRUE),
         Average_Balanced_Accuracy = mean(Balanced_Accuracy, na.rm = TRUE)
@@ -481,18 +472,18 @@ get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_
     final_avg_k <- average_k_npcs_by_metric %>%
       filter(Metric == best_metric) %>%
       pull(Average_k) %>%
-      round()
+      as.integer()
+    cat("final_avg_k: ", final_avg_k)
     
     final_avg_n_pcs <- average_k_npcs_by_metric %>%
       filter(Metric == best_metric) %>%
       pull(Average_n_pcs) %>%
-      round()
+      as.integer()
+    cat("final_avg_n_pcs: ", final_avg_n_pcs)
     
     return(list(best_per_fold=best_per_fold, average_k_npcs_by_metric=average_k_npcs_by_metric, best_metric = best_metric, final_avg_k = final_avg_k, final_avg_n_pcs = final_avg_n_pcs))
   }
-  
 }
-
 ```
 
 ## Threshold selection
@@ -563,9 +554,9 @@ if(COMPUTE_GRID_SEARCH){
   param_grid_thresholds <- list(
     n_pcs = c(30),  # Fixed n_pcs
     k_values = c(5),  # Fixed k
-    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
-    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
-    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+    modified_sse = seq(from = 2.0e-07, to = 1.1e-05, length.out = 30), # Threshold 
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)
   )
   
   best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
