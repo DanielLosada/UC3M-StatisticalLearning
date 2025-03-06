@@ -565,17 +565,6 @@ print(paste("Final Average n_pcs:", final_avg_n_pcs))
 
 
 ```{r}
-best_per_fold <- results_final %>%
-  group_by(Fold) %>%
-  slice_max(Balanced_Accuracy, with_ties = FALSE)  # Selects the row with the highest Balanced Accuracy
-
-# Print the results
-print(best_per_fold)
-
-```
-
-
-```{r}
 '''
 compute_avg_within_distances <- function(Y, image_ids) {
   unique_ids <- unique(image_ids)  # Get unique person IDs
