@@ -1,0 +1,745 @@
+---
+title: "Assigment"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("archive")
+install.packages("OpenImageR")
+```
+
+```{r}
+library(archive)
+library(dplyr)
+
+COMPUTE_GRID_SEARCH <- FALSE
+```
+
+
+### Input data
+
+The code begins by handling the extraction of image data stored in a compressed archive. It specifies the file name "Training.rar" and attempts to extract its contents using the function `archive_extract()` from the archive package. This extraction is wrapped in a `try()` block with the `silent = TRUE` parameter, ensuring that any errors during extraction (for example, if the archive has already been extracted) do not interrupt the flow of execution.
+
+
+```{r}
+# Specify the file path
+rar_file <- "Training.rar"
+
+# Extract the contents
+#unpacked_files <- archive::archive_extract(rar_file)
+try(archive_extract("Training.rar"), silent = TRUE)
+```
+
+Following extraction, two helper functions are defined to manage and organize the image files. The first function, `extract_id`, takes a filename, extracts the first sequence of digits using regular expressions, and converts the result to a numeric value. This numeric identifier is intended to represent a unique ID associated with each image, likely corresponding to a subject’s identifier. The second function, `get_sorted_filenames`, leverages `list.files()` to obtain all JPEG files in the "Training" folder. It then applies `extract_id` to each filename, orders the files based on these numeric identifiers, and returns a sorted list of image file paths. This sorting ensures that the images are processed in a consistent order, which is crucial for reliable downstream analysis.
+
+
+```{r}
+extract_id <- function(filename) {
+    matches <- regmatches(basename(filename), regexpr("[0-9]+", basename(filename)))
+    return(as.numeric(matches))  # Convert to numeric
+}
+
+get_sorted_filenames <- function(){
+  # Get all .jpg files
+  image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
+  
+  sorted_indices <- order(sapply(image_files, extract_id))
+  image_files <- image_files[sorted_indices]
+  return(image_files)
+}
+
+```
+
+
+Once the filenames are sorted, the code proceeds to load and process the images. The sorted list of image file paths is stored in `image_files`, and the numeric IDs are extracted again for potential labeling or further processing. The script then iterates over each file, loading the image using `OpenImageR::readImage()`. Since the images are in color, the code handles each of the three channels (red, green, and blue) separately. For each channel, the two-dimensional array representing the pixel intensities is flattened into a one-dimensional vector using `as.vector()`. These three vectors are then concatenated into a single vector, effectively transforming each image into a long vector that contains all the pixel values sequentially.
+
+Then each channel is flattened into vectors $$r, g, b \in \mathbb{R}^{HW}$$ and concatenated as:
+
+$$$$
+\mathbf{x} = \begin{bmatrix} r \\ g \\ b \end{bmatrix} \in \mathbb{R}^{3HW}.
+$$$$
+
+Each of these vectors is stored in a list, with the file name as the key.
+```{r}
+# Get all .jpg files in the Training folder
+image_files <- get_sorted_filenames()
+#Remove the files
+#image_files <- image_files[!image_files %in% c("Training/1AT.jpg", "Training/3BT.jpg")]
+
+image_ids <- sapply(image_files, extract_id)
+
+image_rows  <- list()
+for (file in image_files) {
+  img <- OpenImageR::readImage(file)  # Load image
+  
+  # Flatten RGB channels and concatenate into a single row
+  red <- as.vector(img[,,1])  # Flatten red channel
+  green <- as.vector(img[,,2]) # Flatten green channel
+  blue <- as.vector(img[,,3])  # Flatten blue channel
+  
+  # Combine R, G, B into one row and store it
+  image_rows[[file]] <- c(red, green, blue)
+}
+
+# Convert the list of rows into a matrix
+M <- do.call(rbind, image_rows)
+
+# Check dimensions (rows = number of images, columns = total pixels * 3)
+dim(M)
+```
+After processing all images, the list of vectors is converted into a matrix $$M$$ using the `do.call(rbind, image_rows)` function. In this matrix, each row corresponds to one image, and each column represents a pixel value from one of the channels, so that if there are $$n$$ images and each image has $$d = 3 \times H \times W$$ features, $$M$$ becomes an $$n \times d$$ matrix. The final command, `dim(M)`, is used to display the dimensions of $$M$$ and verify that the data has been structured correctly. This pre-processing is fundamental as it sets up the data in the appropriate high-dimensional format.
+
+# Part A
+
+The function `compute_pca` begins by calculating the mean vector of the input data matrix, where each column corresponds to a feature (in this case, pixel values). The mean is computed using the `colMeans` function and stored in the variable `mean_m`. Immediately after, the function centers the data by subtracting this mean from every observation. This centering is achieved using the `sweep` function, which subtracts the mean from each column of the data matrix, ensuring that the new data matrix has a zero mean along every dimension.
+
+Once the data is centered, the function computes a covariance-like matrix, but instead of calculating the full $d \times d$ covariance matrix (with $d$ being the number of pixels), it computes a smaller $n \times n$ matrix, where $n$ is the number of observations. This is done by multiplying the centered matrix by its transpose and scaling by $\frac{1}{n-1}$, yielding
+$$
+C = \frac{1}{n-1} X_c X_c^\top,
+$$
+where $X_c$ represents the centered data matrix. This smaller covariance matrix is computationally more efficient to work with when the dimensionality is very high.
+
+Next, an eigen-decomposition is performed on this smaller covariance matrix using the `eigen` function, which returns a set of eigenvalues and eigenvectors. Since these eigenvectors are computed in the space of the $n \times n$ matrix, they do not directly represent the directions in the original high-dimensional pixel space. To map them back, the function multiplies the transpose of the centered data by these eigenvectors. This operation effectively transfers the principal component directions to the original space. After this, each column (which represents an eigenvector in pixel space) is normalized by dividing it by its Euclidean norm, ensuring that every principal component has unit length.
+
+Finally, the function computes the proportion of variance explained by each principal component. This is done by dividing each eigenvalue by the sum of all eigenvalues, resulting in a normalized vector of explained variances. The function then returns a list containing the mean vector (`mean_obs`), the matrix of normalized eigenvectors (`P`), the vector of explained variance proportions (`D`), and the raw eigenvalues (`E`). After running `pca_results <- compute_pca(M)`, these variables store the respective results, setting the stage for subsequent analysis such as dimensionality reduction and facial recognition using the principal component representation.
+```{r}
+#compute_pca <- function(data) {
+  # Compute mean
+#  mean_m <- colMeans(data)
+  
+  # Subtract the mean from each row
+#  centered_matrix <- sweep(data, 2, mean_m, FUN = "-")
+
+#  n <- nrow(centered_matrix)
+#  var_cov_small <- (1 / (n - 1)) * (centered_matrix %*% t(centered_matrix))
+#  eigen_dec <- eigen(var_cov_small)
+  
+#  V <- t(centered_matrix) %*% eigen_dec$vectors
+#  V <- apply(V, 2, function(v) v / sqrt(sum(v^2)))
+  
+  
+  
+#  return(list(mean_obs = mean_m, P = eigen_dec$vectors, D = eigen_dec$values, V=V))
+#}
+
+compute_pca <- function(data) {
+  # Compute mean
+  mean_m <- colMeans(data)
+  
+  # Subtract the mean from each row
+  centered_matrix <- sweep(data, 2, mean_m, FUN = "-")
+
+  n <- nrow(centered_matrix)
+  var_cov_small <- (1 / (n - 1)) * (centered_matrix %*% t(centered_matrix))
+  eigen_dec <- eigen(var_cov_small)
+  
+  P <- t(centered_matrix) %*% eigen_dec$vectors
+  P <- apply(P, 2, function(p) p / sqrt(sum(p^2)))
+  
+  D <- eigen_dec$values / sum(eigen_dec$values)
+
+  return(list(mean_obs = mean_m, P = P, D = D, E = eigen_dec$values))
+}
+
+pca_results <- compute_pca(M)
+
+mean_obs <- pca_results$mean_obs
+P <- pca_results$P #eigenvectors in pixel space normalized #image space
+D <- pca_results$D #variance explained by eigenvalue
+E <- pca_results$E #eigenvalues
+#V <- pca_results$V #eigenvectors in pixel space normalized
+```
+
+
+
+The projection of the images in the pca space will be the following: 
+```{r}
+#Y <- centered_matrix %*% V
+Y <- sweep(M, 2, mean_obs, FUN = "-") %*% P
+```
+
+ESTO NO SÉ SI QUIERES EXPLICARLO EN PROFUNDIDAD O COMENTAR EL GRÁFICO. 
+
+Visualize the `pc` component of the `image_index` image
+
+```{r}
+visualize_pc <- function(image_index, pc, mean_obs, P, Y, img_height = 200, img_width = 180) {
+  # Extract the first principal component
+  p1 <- P[,pc]  # First principal component (size p)
+  
+  # Get the projection of the specific image onto PC1
+  y1 <- Y[image_index, 1]  # First coordinate in PCA space
+  
+  # Reconstruct only PC1 contribution
+  x_pc1 <- y1 * p1 + mean_obs
+  
+  # Reshape into image dimensions
+  image_matrix <- array(x_pc1, dim = c(img_height, img_width, 3))
+  
+  # Plot the PC1 contribution as an image
+  return(image_matrix)
+  
+}
+
+# Example: Visualizing the PC1 contribution for image x
+image_matrix <- visualize_pc(1,1, mean_obs, P, Y)
+OpenImageR::imageShow(image_matrix)
+```
+
+```{r}
+#OpenImageR::writeImage(image_matrix, "output_image.png")
+#utils::browseURL("output_image.png")
+```
+
+
+```{r}
+library(plotly)
+
+plot_pca_3d_interactive <- function(Y, image_ids) {
+  df <- data.frame(PC1 = Y[,1], PC2 = Y[,2], PC3 = Y[,3], ID = factor(image_ids))
+
+  plot_ly(df, x = ~PC1, y = ~PC2, z = ~PC3, color = ~ID, text = ~paste("ID:", ID),
+          type = "scatter3d", mode = "markers") %>%
+    layout(title = "PCA Projection (PC1 vs PC2 vs PC3)")
+}
+
+# Call the function to plot interactively
+plot_pca_3d_interactive(Y, image_ids)
+
+```
+
+# FDA
+
+#### AUTOVALORES COMLEJOS comentar
+
+The function `fda` is designed to perform Fisher Discriminant Analysis (FDA) on a dataset, where the input matrix $Y$ has dimensions $n \times p$ and its last column represents the class labels. Initially, the function extracts the class labels from the last column of $Y$ and converts them into a factor to properly identify the different groups. The remaining columns of $Y$ form the feature matrix $X$, which contains the observations used for the FDA.
+
+Once $X$ is isolated, the overall mean vector $m$ of the features is calculated using the column means of $X$. This mean vector represents the central tendency of the entire dataset in the feature space. The function then determines the unique classes present in the class vector and initializes two key scatter matrices: the within-class scatter matrix $S_W$ and the between-class scatter matrix $S_B$. Both matrices are initialized as zero matrices of size $p \times p$, where $p$ is the number of features.
+
+For each unique class, the function extracts the submatrix $X_{\text{class}}$ containing only the observations that belong to that class, and computes the class mean (denoted as $\mu_{\text{class}}$) for those observations. The between-class scatter matrix $S_B$ is updated by adding the weighted outer product of the difference between the class mean and the overall mean. Mathematically, for each class with $n_i$ observations, the contribution is 
+$$
+n_i (\mu_{\text{class}} - m)(\mu_{\text{class}} - m)^T.
+$$  
+Simultaneously, the function computes the within-class scatter matrix $S_W$ by iterating over each observation in the class. For each observation $x_j$ in $X_{\text{class}}$, it calculates the difference $x_j - \mu_{\text{class}}$, and adds the outer product of this difference with itself to $S_W$, that is,
+$$
+(x_j - \mu_{\text{class}})(x_j - \mu_{\text{class}})^T.
+$$
+
+After processing all classes, the function performs an eigen-decomposition on the matrix product $S_W^{-1} S_B$. This is achieved by using the `solve` function to invert $S_W$ and then multiplying it with $S_B$. The eigenvalues and eigenvectors resulting from this operation indicate the directions in the feature space that maximize the ratio of between-class scatter to within-class scatter. The eigenvalues are sorted in decreasing order, and the eigenvectors are reordered accordingly to ensure that the most discriminative directions appear first. The imaginary part is omitted because it induces to errors and are very small values.
+
+Finally, the function returns a list containing the overall mean vector $m$, the sorted eigenvectors (denoted as $P$), and the eigenvalues (denoted as $D$). These eigenvectors represent the FDA directions that optimally separate the classes, while the eigenvalues reflect the discriminative power along those directions.
+```{r}
+fda <- function(Y) {
+  # Y is an n x p matrix obtained from a PCA where the last column has to contain the class.
+  
+  # We extract the class column and convert it to a factor
+  class_vector <- Y[, ncol(Y)]
+  class_vector <- as.factor(class_vector)
+  
+  # We extract the feature matrix (all columns except the last one)
+  X <- Y[, -ncol(Y), drop = FALSE]
+  
+  # We compute the overall mean of the features
+  m <- colMeans(X)
+  
+  # Determine the number of classes and the unique classes
+  people <- unique(class_vector)
+  
+  # We obtain the number of features (dimensions) to select the size of S_W and S_B
+  p <- ncol(X)
+  
+  # We initialize the within-class scatter matrix (S_W) and the between-class scatter matrix (S_B)
+  S_W <- matrix(0, nrow = p, ncol = p)
+  S_B <- matrix(0, nrow = p, ncol = p)
+  
+  # For each class, we compute the class mean and we accumulate contributions to S_B and S_W
+  for (cl in people) {
+    
+    # Submatrix of observations for the current class 'cl'
+    X_class <- X[class_vector == cl, , drop = FALSE]
+    n_i <- nrow(X_class)
+    
+    # We compute the mean of the current class
+    mean_class <- colMeans(X_class)
+    
+    # We update S_B for each class
+    # We perform the outer product of (mean_class - m), weighted by n_i
+    S_B <- S_B + n_i * ((mean_class - m) %*% t((mean_class - m)))
+    
+    # To Update S_W we need to access every observation j of the class one by one
+    # We create a for loop which goes through each observation to perform the
+    # sum of (x_j - mean_class)(x_j - mean_class)^T
+    for (j in 1:n_i) {
+      diff_j <- as.matrix(X_class[j, ] - mean_class)
+      S_W <- S_W + diff_j %*% t(diff_j)
+    }
+  }
+  
+  # We compute the eigenvalues and eigenvectors for the matrix solve(S_W) %*% S_B
+  eig_values <- eigen(solve(S_W) %*% S_B)
+  
+  # We obtain the sorted indices of the eigenvalues in decreasing order
+  sort_eig <- order(eig_values$values, decreasing = TRUE)
+  
+  # We sort the eigenvectors and eigenvalues according these indices
+  eigenvectors <- Re(eig_values$vectors[, sort_eig])
+  eigenvalues <- Re(eig_values$values[sort_eig])  # Ensure real values
+  
+  return(list(overall_mean = m, P = eigenvectors, D = eigenvalues))
+}
+```
+
+```{r}
+# We get 35 PCA's because they accumulate 95% of the variance explained
+reduced_Y <- Y[,1:35]
+reduced_Y <- cbind(reduced_Y, class = image_ids)
+fda_results <- fda(reduced_Y)
+```
+
+```{r}
+
+# The overall mean face (used for centering):
+mean_face <- fda_results$overall_mean
+
+# The matrix of Fisher discriminant directions (columns are the directions):
+fisher_directions <- fda_results$P
+
+# The eigenvalues (discriminative power for each direction):
+discriminant_power <- fda_results$D
+```
+
+
+
+```{r}
+reduced_Y <- Y[,1:35]
+FDA_proj <- reduced_Y %*% fisher_directions
+
+# We use k-1 components because the rest will just add noise. 
+reduced_FDA_proj <- FDA_proj[, 1:24] 
+```
+
+
+# Knn
+
+1. Take the image to classify and compute the distance to all the other images.
+2. Sort the distances by ascending order.
+3. Take the k closest samples and the id corresponding to it. 
+4. The class is the majority class among the closest neighbors.
+5. Take the average distance of k nearest neighbors and if is larger than a threshold we consider that the image does not belong to the dataset.
+
+"The best recognition results were achieved using
+the following distance measures: simplified Mahalanobis, weighted angle-based distance, proposed modified SSE-based distance, angle-based distance between whitened feature vectors."
+
+
+
+```{r}
+project_image <- function(image_vector, mean_obs, P) {
+  centered_image <- image_vector - mean_obs
+  return(t(P) %*% centered_image)
+}
+
+#new_image_vector <- as.vector(OpenImageR::readImage(image_files[1]))
+#y_new <- project_image(new_image_vector, mean_obs, V)
+
+# Computes the distance between 2 vectors. D is the eigenvalue list, required for some metrics. 
+compute_distance <- function(x, y, E, metric) {
+    
+    if (metric == "simplified_mahalanobis") {
+      alpha <- 0.25
+      z <- sqrt(pmax(0, E / (E + alpha^2)))
+      return(-sum(z * x * y))
+      
+    } else if (metric == "weighted_angle") {
+      z <- sqrt(pmax(0, 1 / E))
+      return(-sum(z * x * y) / sqrt(sum(x^2) * sum(y^2)))
+      
+    } else if (metric == "modified_sse") {
+      return(sum((x - y)^2) / (sum(x^2) * sum(y^2)))
+      
+    } else {
+      stop("Invalid metric. Choose from 'simplified_mahalanobis', 'weighted_angle', or 'modified_sse'.")
+    }
+}
+
+knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
+  #cat("length(y_new): ", length(y_new), '\n')
+  #cat("dim(Y): ", dim(Y), '\n')
+  # Compute distances of y_new with all rows in Y.
+  #if (!is.matrix(y_new)) {
+  #  y_new <- matrix(y_new, nrow = 1)  # Force y_new to always be a matrix
+  #}
+  distances <- apply(Y, 1, function(y) compute_distance(y, y_new, E, metric) )
+  dist_df <- data.frame(ID = image_ids, Distance = distances)
+  #cat("Distances computed: ", distances)
+  # Sort the distance in ascending order
+  dist_df <- dist_df[order(dist_df$Distance), ]
+
+  # Take the first k distances
+  k_nearest <- head(dist_df, k)
+  #print(k_nearest)
+  
+  # Average distance. If distance is larger than threshold return 0. Else continue
+  #distance <- mean(k_nearest$Distance) # Doesn't make sense in similarity metrics that can have negative values or ranges that go   from negatives to positive. Averaging positive and negative values might cancel out the real distance.
+  
+  # Min distance: If the closest/most similar, is too far, the rest will be farther.
+  distance <- min(k_nearest$Distance)
+  #cat("Min distance of the ", k, " closest images is: ", distance, "(",metric, ")\n")
+  #cat("Threshold: ", threshold, "\n")
+  #cat("Is distance bigger than threshold? ", distance > threshold, "\n")
+  if (distance > threshold) {
+    return(0)
+  }
+  
+  # value count of the ids. Return the majority class.
+  id_counts <- table(k_nearest$ID)
+  majority_id <- as.numeric(names(which.max(id_counts)))
+  return(majority_id)
+}
+```
+
+
+# Parameter selection
+
+```{r}
+create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_splits = 5, num_people_to_exclude = 1) {
+  set.seed(1)
+  unique_people <- unique(image_ids)  # Get unique class labels
+  
+  splits <- lapply(1:num_splits, function(i) {
+    
+    # Randomly select people to exclude from train
+    excluded_people <- sample(unique_people, num_people_to_exclude)
+    
+    # Get indices of images belonging to excluded people
+    excluded_indices <- which(image_ids %in% excluded_people)
+    
+    # Sample test images from the remaining people
+    remaining_images <- setdiff(names(image_ids), names(image_ids)[excluded_indices])  # Remove excluded images
+    test_images <- sample(remaining_images, round(length(remaining_images) * percent_test))
+    
+    # Get test and train indices
+    test_indices <- which(names(image_ids) %in% test_images)  # Normal test split
+    test_indices <- unique(c(test_indices, excluded_indices))  # Force excluded images into the test set
+    train_indices <- setdiff(seq_along(image_ids), test_indices)  # Remaining are train
+    
+    cat("\nExcluded people: ", paste(excluded_people, collapse = ", "), "\n")
+    cat("length test: ", length(test_indices), "\nlength train: ", length(train_indices), "\n")
+    
+    # Extract class labels for train and test sets
+    train_people <- unique(image_ids[train_indices])
+    test_people <- unique(image_ids[test_indices])
+    
+    # Check if any class is in test but not in train
+    missing_people <- setdiff(test_people, train_people)
+    missing_people_indices <- which(image_ids %in% missing_people)
+    
+    if (length(missing_people) > 0) {
+      cat("The following people are in the test set but not in the train set: ", paste(missing_people, collapse = ", "), '\n')
+    }
+    
+    return(list(train = train_indices, test = test_indices, missing_people = missing_people_indices))
+  })
+  
+  return(splits)
+}
+
+run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_test, 
+                                   metrics, param_grid, fold, n_pc, E_pc, results) {
+  
+  for (metric in metrics) {
+    if (!(metric %in% names(param_grid))) {
+      stop(paste("Unknown metric:", metric))
+    }
+    
+    for (k in param_grid$k_values) {
+      for (threshold in param_grid[[metric]]) {
+        
+        cat("Testing Metric:", metric, "| k:", k, "| n_pc:", n_pc, "| threshold:", threshold, "\n")
+        
+        predictions <- sapply(1:nrow(Y_test), function(i) {
+          knn_classifier(k, threshold, Y_test[i, ], Y_train, image_ids_train, metric, E_pc)
+        })
+        
+        known_mask <- image_ids_test %in% image_ids_train  
+        unknown_mask <- !image_ids_test %in% image_ids_train  
+        
+        known_accuracy <- ifelse(sum(known_mask) > 0, mean(predictions[known_mask] == image_ids_test[known_mask]), NA)
+        unknown_accuracy <- ifelse(sum(unknown_mask) > 0, mean(predictions[unknown_mask] == 0), NA)
+        balanced_accuracy <- mean(c(known_accuracy, unknown_accuracy), na.rm = TRUE)
+        
+        # Store results
+        results <- rbind(results, data.frame(Fold = fold, n_pcs = n_pc, 
+                                              Metric = metric, k = k, Threshold = threshold, 
+                                              Known_Accuracy = known_accuracy, Unknown_Accuracy = unknown_accuracy,
+                                              Balanced_Accuracy = balanced_accuracy))
+      }
+    }
+  }
+  return(results)
+}
+
+find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, num_people_to_exclude = 1, compute_pca = TRUE) {
+  
+  # Create random splits
+  folds <- create_random_splits_by_image(image_ids, num_splits = num_folds, 
+                                         num_people_to_exclude = num_people_to_exclude)
+  results <- list()
+  
+  for (fold in seq_along(folds)) {
+    test_indices <- folds[[fold]]$test
+    train_indices <- folds[[fold]]$train
+    
+    cat("Fold:", fold, "\n")
+    
+    if (compute_pca) {
+      cat("Computing PCA...\n")
+      pca_results <- compute_pca(M[train_indices, ])
+      
+      mean_obs <- pca_results$mean_obs
+      P <- pca_results$P
+      E <- pca_results$E
+      
+      cat("PCA computed. Projecting data...\n")
+      Y <- sweep(M, 2, mean_obs, FUN = "-") %*% P  # Project data
+    } else {
+      cat("Skipping PCA. Using original data...\n")
+      Y <- M  # Work directly with the original data
+    }
+    
+    cat("dim(Y):", dim(Y), "\n")
+    
+    # If we are not computing PCA, the only usable metric is 'modified_sse'. The others depend on the eigenvalues.
+    if (!compute_pca) metrics <- c("modified_sse")
+    
+    # Define the dataset to use
+    if (compute_pca) {
+      n_pcs_list <- param_grid$n_pcs  # Iterate over principal components
+    } else {
+      n_pcs_list <- list(NA)  # Placeholder, as we don't loop over n_pcs
+    }
+    
+    # Process with or without PCA
+    if (compute_pca) {
+      for (n_pc in n_pcs_list) {
+        
+        Y_pc <- Y[, 1:n_pc, drop = FALSE]  # Select principal components
+        E_pc <- E[1:n_pc, drop = FALSE]    # Select corresponding eigenvalues
+        Y_train <- Y_pc[train_indices, , drop = FALSE]
+        Y_test <- Y_pc[test_indices, , drop = FALSE]
+        
+        image_ids_train <- image_ids[train_indices]
+        image_ids_test <- image_ids[test_indices]
+        
+        results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
+                               metrics, param_grid, fold, n_pc, E_pc, results)
+      }
+    } else {
+      # No PCA: Use the entire dataset
+      Y_train <- Y[train_indices, , drop = FALSE]
+      Y_test <- Y[test_indices, , drop = FALSE]
+      
+      image_ids_train <- image_ids[train_indices]
+      image_ids_test <- image_ids[test_indices]
+      
+      results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
+                             metrics, param_grid, fold, n_pc = NA, E_pc = NULL, results)
+    }
+  }
+  
+  return(results)
+}
+
+
+
+
+get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_ids, metrics, param_grid, num_folds = 5, num_people_to_exclude=1, compute_pca=TRUE){
+
+  results <- find_best_params(M=M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
+                                       param_grid=param_grid_thresholds, num_folds = num_folds, num_people_to_exclude=num_people_to_exclude, compute_pca=compute_pca)
+  
+  if(best_threshold){
+    # Step 1: Get the best threshold per fold and metric
+    best_thresholds_per_fold <- results %>%
+      group_by(Fold, Metric) %>%
+      slice_max(Balanced_Accuracy, n = 1, with_ties = FALSE) %>%  # Selects the best threshold per fold and metric
+      select(Fold, Metric, Threshold, Balanced_Accuracy) %>%
+      ungroup()
+    
+    #print(best_thresholds_per_fold)
+    
+    # Step 2: Compute the average threshold per metric
+    average_best_thresholds <- best_thresholds_per_fold %>%
+      group_by(Metric) %>%
+      summarise(Average_Threshold = mean(Threshold, na.rm = TRUE)) %>%
+      ungroup()
+    
+    #print(average_best_thresholds)
+    
+    # Convert to named vector for easy access
+    best_thresholds_vector <- average_best_thresholds %>%
+      pull(Average_Threshold, name = Metric)
+    
+    return(list(best_thresholds_per_fold=best_thresholds_per_fold,average_best_thresholds=average_best_thresholds, best_thresholds=best_thresholds_vector))
+  }else{
+    # Step 1: Get the best row per fold based on Balanced Accuracy
+    best_per_fold <- results %>%
+      group_by(Fold) %>%
+      slice_max(Balanced_Accuracy, with_ties = FALSE)  # Selects the row with the highest Balanced Accuracy per fold
+    
+    print(best_per_fold)
+    
+    # Step 2: Compute the average k and n_pc by Metric
+    average_k_npcs_by_metric <- best_per_fold %>%
+      group_by(Metric) %>%
+      summarise(
+        Occurrences = n(),
+        Average_k = mean(k, na.rm = TRUE),
+        Average_n_pcs = mean(n_pcs, na.rm = TRUE),
+        Average_Known_Accuracy = mean(Known_Accuracy, na.rm = TRUE),
+        Average_Unknown_Accuracy = mean(Unknown_Accuracy, na.rm = TRUE),
+        Average_Balanced_Accuracy = mean(Balanced_Accuracy, na.rm = TRUE)
+      ) %>%
+      ungroup()
+    
+    print(average_k_npcs_by_metric)
+    
+    # Step 3: Find the best metric (one with the highest average Balanced Accuracy)
+    best_metric <- average_k_npcs_by_metric %>%
+      slice_max(Occurrences, with_ties = FALSE) %>%
+      pull(Metric)
+    
+    # Step 4: Compute the average k and n_pcs ONLY for the best metric
+    final_avg_k <- average_k_npcs_by_metric %>%
+      filter(Metric == best_metric) %>%
+      pull(Average_k) %>%
+      round()
+    
+    final_avg_n_pcs <- average_k_npcs_by_metric %>%
+      filter(Metric == best_metric) %>%
+      pull(Average_n_pcs) %>%
+      round()
+    
+    return(list(best_per_fold=best_per_fold, average_k_npcs_by_metric=average_k_npcs_by_metric, best_metric = best_metric, final_avg_k = final_avg_k, final_avg_n_pcs = final_avg_n_pcs))
+  }
+  
+}
+
+```
+
+## Threshold selection
+
+```{r, include=FALSE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best threshold...\n")
+  param_grid_thresholds <- list(
+    n_pcs = c(30),  # Fixed n_pcs
+    k_values = c(5),  # Fixed k
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+  )
+
+best_thresholds_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
+
+saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results.rds")
+}
+```
+
+```{r}
+readRDS("best_thresholds_pca_results.rds")
+```
+
+
+## Metric, k, n_pcs selection
+
+
+```{r, include=FALSE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best params...\n")
+  best_thresholds_pca_results <- readRDS("best_thresholds_pca_results.rds")
+  best_thresholds_pca <- best_thresholds_pca_results$best_thresholds
+  
+  param_grid_others <- list(
+    n_pcs = seq(10, 30, by=1),
+    #n_pcs = c(4),
+    k_values = seq(1, 10, by=1),
+    #k_values = c(1),
+    modified_sse = c(best_thresholds_pca["modified_sse"]),
+    simplified_mahalanobis = c(best_thresholds_pca["simplified_mahalanobis"]),
+    weighted_angle = c(best_thresholds_pca["weighted_angle"])
+  )
+  
+  best_params_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
+  
+  saveRDS(best_params_pca, "best_params_pca.rds")
+}
+```
+
+```{r}
+best_params_pca <- readRDS("best_params_pca.rds")
+best_params_pca
+```
+
+
+# Compare PCA vs Original image representation
+
+## Find best parameters original image representation.
+
+### Threshold selection
+
+
+```{r, include=FALSE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best parameters...\n")
+  param_grid_thresholds <- list(
+    n_pcs = c(30),  # Fixed n_pcs
+    k_values = c(5),  # Fixed k
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+  )
+  
+  best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
+  
+  saveRDS(best_thresholds_no_pca_results, "best_thresholds_no_pca_results.rds")
+}
+```
+
+
+
+### Metric, k, n_pcs selection
+
+```{r, include=FALSE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best parameters...\n")
+  best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results.rds")
+  best_thresholds_no_pca <- best_thresholds_no_pca_results$best_thresholds
+  
+  param_grid_others <- list(
+    n_pcs = seq(10, 30, by=1),
+    #n_pcs = c(4),
+    k_values = seq(1, 10, by=1),
+    #k_values = c(1),
+    modified_sse = c(best_thresholds_no_pca["modified_sse"]),
+    simplified_mahalanobis = c(best_thresholds_no_pca["simplified_mahalanobis"]),
+    weighted_angle = c(best_thresholds_no_pca["weighted_angle"])
+  )
+  
+  best_params_no_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
+  
+  saveRDS(best_params_no_pca, "best_params_no_pca.rds")
+}
+```
+
+```{r}
+best_params_no_pca <- readRDS("best_params_no_pca.rds")
+best_params_no_pca
+```
+
+
+
