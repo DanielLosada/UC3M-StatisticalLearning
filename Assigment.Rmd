@@ -426,7 +426,7 @@ find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, D
 get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_ids, metrics, param_grid, num_folds = 5, D, num_people_to_exclude=1, compute_pca=TRUE){
 
   results <- find_best_params(M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
-                                       param_grid=param_grid_thresholds, num_folds = 1, D, num_people_to_exclude=2, compute_pca=compute_pca)
+                                       param_grid=param_grid_thresholds, num_folds = num_folds, D, num_people_to_exclude=2, compute_pca=compute_pca)
   
   if(best_threshold){
     # Step 1: Get the best threshold per fold and metric
@@ -567,8 +567,8 @@ if(COMPUTE_GRID_SEARCH){
     n_pcs = c(30),  # Fixed n_pcs
     k_values = c(5),  # Fixed k
     modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
-    #simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
-    #weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
   )
   
   best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, D, num_people_to_exclude=2, compute_pca=FALSE)
@@ -593,8 +593,8 @@ if(COMPUTE_GRID_SEARCH){
     k_values = seq(1, 10, by=1),
     #k_values = c(1),
     modified_sse = c(best_thresholds_no_pca["modified_sse"]),
-    #simplified_mahalanobis = c(best_thresholds_no_pca["simplified_mahalanobis"]),
-    #weighted_angle = c(best_thresholds_no_pca["weighted_angle"])
+    simplified_mahalanobis = c(best_thresholds_no_pca["simplified_mahalanobis"]),
+    weighted_angle = c(best_thresholds_no_pca["weighted_angle"])
   )
   
   best_params_no_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, D, num_people_to_exclude=2, compute_pca=FALSE)
