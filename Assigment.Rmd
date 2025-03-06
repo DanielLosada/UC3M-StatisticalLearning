@@ -16,7 +16,7 @@ install.packages("OpenImageR")
 library(archive)
 library(dplyr)
 
-set.seed(42)
+COMPUTE_GRID_SEARCH <- TRUE
 ```
 
 
@@ -131,17 +131,6 @@ E <- pca_results$E #eigenvalues
 #V <- pca_results$V #eigenvectors in pixel space normalized
 ```
 
-```{r}
-mean_obs
-```
-
-
-# Variance explained by each component
-```{r}
-for (i in seq_along(E)) {
-  cat("Principal component ", i, " explains ",E[i] / sum(E)*100, "% of the variance.\n")
-}
-```
 
 
 Let's get the projection of the training images in the pca space
@@ -178,19 +167,8 @@ OpenImageR::imageShow(image_matrix)
 ```
 
 ```{r}
-OpenImageR::writeImage(image_matrix, "output_image.png")
-utils::browseURL("output_image.png")
-```
-
-
-```{r}
-#project_image <- function(image_vector, mean_obs, V) {
-#  centered_image <- image_vector - mean_obs
-#  return(t(V) %*% centered_image)
-#}
-
-#new_image_vector <- as.vector(OpenImageR::readImage(image_files[1]))
-#y_new <- project_image(new_image_vector, mean_obs, V)
+#OpenImageR::writeImage(image_matrix, "output_image.png")
+#utils::browseURL("output_image.png")
 ```
 
 
@@ -238,7 +216,6 @@ compute_distance <- function(x, y, E, metric) {
     if (metric == "simplified_mahalanobis") {
       alpha <- 0.25
       z <- sqrt(pmax(0, E / (E + alpha^2)))
-      #cat("z: ", z)
       return(-sum(z * x * y))
       
     } else if (metric == "weighted_angle") {
@@ -265,7 +242,7 @@ knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
   #cat("Distances computed: ", distances)
   # Sort the distance in ascending order
   dist_df <- dist_df[order(dist_df$Distance), ]
-  
+
   # Take the first k distances
   k_nearest <- head(dist_df, k)
   #print(k_nearest)
@@ -289,21 +266,12 @@ knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
 }
 ```
 
-```{r}
-#Test with "Training/1AT.jpg", "Training/3BT.jpg"
-#metrics: simplified_mahalanobis, weighted_angle, modified_sse
-new_image_vector <- as.vector(OpenImageR::readImage("Training/19BT.jpg"))
-y_new <- project_image(new_image_vector, mean_obs, P)
-
-knn_classifier(5, 100, y_new, Y, image_ids, 'modified_sse', E)
-```
-
-
 
 # Parameter selection
+
 ```{r}
 create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_splits = 5, num_people_to_exclude = 1) {
-  
+  set.seed(1)
   unique_people <- unique(image_ids)  # Get unique class labels
   
   splits <- lapply(1:num_splits, function(i) {
@@ -344,208 +312,300 @@ create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_spl
   return(splits)
 }
 
-#splits_by_img <- create_random_splits_by_image(image_ids, num_people_to_exclude=1)
-#splits_by_img
-```
-
-```{r}
-find_best_params <- function(M,image_ids, metrics, param_grid, num_folds = 5, D, num_people_to_exclude=1) {
-  folds <- create_random_splits_by_image(image_ids, num_splits=num_folds, num_people_to_exclude=num_people_to_exclude)
+run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_test, 
+                                   metrics, param_grid, fold, n_pc, E_pc) {
   results <- list()
+  
+  for (metric in metrics) {
+    if (!(metric %in% names(param_grid))) {
+      stop(paste("Unknown metric:", metric))
+    }
+    
+    for (k in param_grid$k_values) {
+      for (threshold in param_grid[[metric]]) {
+        
+        cat("Testing Metric:", metric, "| k:", k, "| n_pc:", n_pc, "| threshold:", threshold, "\n")
+        
+        predictions <- sapply(1:nrow(Y_test), function(i) {
+          knn_classifier(k, threshold, Y_test[i, ], Y_train, image_ids_train, metric, E_pc)
+        })
+        
+        known_mask <- image_ids_test %in% image_ids_train  
+        unknown_mask <- !image_ids_test %in% image_ids_train  
+        
+        known_accuracy <- ifelse(sum(known_mask) > 0, mean(predictions[known_mask] == image_ids_test[known_mask]), NA)
+        unknown_accuracy <- ifelse(sum(unknown_mask) > 0, mean(predictions[unknown_mask] == 0), NA)
+        balanced_accuracy <- mean(c(known_accuracy, unknown_accuracy), na.rm = TRUE)
+        
+        # Store results
+        results <- rbind(results, data.frame(Fold = fold, n_pcs = n_pc, 
+                                              Metric = metric, k = k, Threshold = threshold, 
+                                              Known_Accuracy = known_accuracy, Unknown_Accuracy = unknown_accuracy,
+                                              Balanced_Accuracy = balanced_accuracy))
+      }
+    }
+  }
+  return(results)
+}
+
+find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, D, 
+                             num_people_to_exclude = 1, compute_pca = TRUE) {
+  
+  # Create random splits
+  folds <- create_random_splits_by_image(image_ids, num_splits = num_folds, 
+                                         num_people_to_exclude = num_people_to_exclude)
+  #results <- list()
   
   for (fold in seq_along(folds)) {
     test_indices <- folds[[fold]]$test
     train_indices <- folds[[fold]]$train
     
-    cat("Fold: ", fold, ". Computing PCA...\n")
-    pca_results <- compute_pca(M[train_indices,])
+    cat("Fold:", fold, "\n")
     
-    mean_obs <- pca_results$mean_obs
-    P <- pca_results$P
-    E <- pca_results$E
-    Y <- sweep(M, 2, mean_obs, FUN = "-") %*% P
-    cat("PCA computed and projections done.\n")
-
-    for (n_pc in param_grid$n_pcs){  
-      Y_pc <- Y[, 1:n_pc, drop = FALSE]
-      E_pc <- E[1:n_pc, drop = FALSE]
-      Y_train <- Y_pc[train_indices, , drop = FALSE]  
-      Y_test <- Y_pc[test_indices, , drop = FALSE]  
+    if (compute_pca) {
+      cat("Computing PCA...\n")
+      pca_results <- compute_pca(M[train_indices, ])
+      
+      mean_obs <- pca_results$mean_obs
+      P <- pca_results$P
+      E <- pca_results$E
+      
+      cat("PCA computed. Projecting data...\n")
+      Y <- sweep(M, 2, mean_obs, FUN = "-") %*% P  # Project data
+    } else {
+      cat("Skipping PCA. Using original data...\n")
+      Y <- M  # Work directly with the original data
+    }
+    
+    cat("dim(Y):", dim(Y), "\n")
+    
+    # If we are not computing PCA, the only usable metric is 'modified_sse'. The others depend on the eigenvalues.
+    if (!compute_pca) metrics <- c("modified_sse")
+    
+    # Define the dataset to use
+    if (compute_pca) {
+      n_pcs_list <- param_grid$n_pcs  # Iterate over principal components
+    } else {
+      n_pcs_list <- list(NA)  # Placeholder, as we don't loop over n_pcs
+    }
+    
+    # Process with or without PCA
+    if (compute_pca) {
+      for (n_pc in n_pcs_list) {
+        
+        Y_pc <- Y[, 1:n_pc, drop = FALSE]  # Select principal components
+        E_pc <- E[1:n_pc, drop = FALSE]    # Select corresponding eigenvalues
+        Y_train <- Y_pc[train_indices, , drop = FALSE]
+        Y_test <- Y_pc[test_indices, , drop = FALSE]
+        
+        image_ids_train <- image_ids[train_indices]
+        image_ids_test <- image_ids[test_indices]
+        
+        results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
+                               metrics, param_grid, fold, n_pc, E_pc)
+      }
+    } else {
+      # No PCA: Use the entire dataset
+      Y_train <- Y[train_indices, , drop = FALSE]
+      Y_test <- Y[test_indices, , drop = FALSE]
+      
       image_ids_train <- image_ids[train_indices]
       image_ids_test <- image_ids[test_indices]
       
-      for (metric in metrics) {
-        if (!(metric %in% names(param_grid))) {
-          stop(paste("Unknown metric:", metric))
-        }
-        
-        for (k in param_grid$k_values) {
-          for (threshold in param_grid[[metric]]) {
-            
-            cat("Testing Metric:", metric, "| k:", k, "| n_pc:", n_pc, "| threshold:", threshold, "\n")
-            
-            predictions <- sapply(1:nrow(Y_test), function(i) {
-              knn_classifier(k, threshold, Y_test[i, ], Y_train, image_ids_train, metric, E_pc)
-            })
-            #print("Prediction done")
-            
-            known_mask <- image_ids_test %in% image_ids_train  
-            unknown_mask <- !image_ids_test %in% image_ids_train  
-            
-            #print("Predictions mask done")
-            
-            known_accuracy <- ifelse(sum(known_mask) > 0, mean(predictions[known_mask] == image_ids_test[known_mask]), NA)
-            unknown_accuracy <- ifelse(sum(unknown_mask) > 0, mean(predictions[unknown_mask] == 0), NA)
-            balanced_accuracy <- mean(c(known_accuracy, unknown_accuracy), na.rm = TRUE)
-            
-            results <- rbind(results, data.frame(Fold = fold, n_pcs = n_pc, Metric = metric, k = k, Threshold = threshold, 
-                                                 Known_Accuracy = known_accuracy, Unknown_Accuracy = unknown_accuracy,
-                                                 Balanced_Accuracy = balanced_accuracy))
-          }
-        }
-      }
+      results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
+                             metrics, param_grid, fold, n_pc = NA, E_pc = NULL)
     }
   }
   
   return(results)
 }
 
+
+
+
+get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_ids, metrics, param_grid, num_folds = 5, D, num_people_to_exclude=1, compute_pca=TRUE){
+
+  results <- find_best_params(M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
+                                       param_grid=param_grid_thresholds, num_folds = 1, D, num_people_to_exclude=2, compute_pca=compute_pca)
+  
+  if(best_threshold){
+    # Step 1: Get the best threshold per fold and metric
+    best_thresholds_per_fold <- results %>%
+      group_by(Fold, Metric) %>%
+      slice_max(Balanced_Accuracy, n = 1, with_ties = FALSE) %>%  # Selects the best threshold per fold and metric
+      select(Fold, Metric, Threshold, Balanced_Accuracy) %>%
+      ungroup()
+    
+    #print(best_thresholds_per_fold)
+    
+    # Step 2: Compute the average threshold per metric
+    average_best_thresholds <- best_thresholds_per_fold %>%
+      group_by(Metric) %>%
+      summarise(Average_Threshold = mean(Threshold, na.rm = TRUE)) %>%
+      ungroup()
+    
+    #print(average_best_thresholds)
+    
+    # Convert to named vector for easy access
+    best_thresholds_vector <- average_best_thresholds %>%
+      pull(Average_Threshold, name = Metric)
+    
+    return(list(best_thresholds_per_fold=best_thresholds_per_fold,average_best_thresholds=average_best_thresholds, best_thresholds=best_thresholds_vector))
+  }else{
+    # Step 1: Get the best row per fold based on Balanced Accuracy
+    best_per_fold <- results %>%
+      group_by(Fold) %>%
+      slice_max(Balanced_Accuracy, with_ties = FALSE)  # Selects the row with the highest Balanced Accuracy per fold
+    
+    print(best_per_fold)
+    
+    # Step 2: Compute the average k and n_pc by Metric
+    average_k_npcs_by_metric <- best_per_fold %>%
+      group_by(Metric) %>%
+      summarise(
+        Occurrences = n(),
+        Average_k = mean(k, na.rm = TRUE),
+        Average_n_pcs = mean(n_pcs, na.rm = TRUE),
+        Average_Known_Accuracy = mean(Known_Accuracy, na.rm = TRUE),
+        Average_Unknown_Accuracy = mean(Unknown_Accuracy, na.rm = TRUE),
+        Average_Balanced_Accuracy = mean(Balanced_Accuracy, na.rm = TRUE)
+      ) %>%
+      ungroup()
+    
+    print(average_k_npcs_by_metric)
+    
+    # Step 3: Find the best metric (one with the highest average Balanced Accuracy)
+    best_metric <- average_k_npcs_by_metric %>%
+      slice_max(Occurrences, with_ties = FALSE) %>%
+      pull(Metric)
+    
+    # Step 4: Compute the average k and n_pcs ONLY for the best metric
+    final_avg_k <- average_k_npcs_by_metric %>%
+      filter(Metric == best_metric) %>%
+      pull(Average_k) %>%
+      round()
+    
+    final_avg_n_pcs <- average_k_npcs_by_metric %>%
+      filter(Metric == best_metric) %>%
+      pull(Average_n_pcs) %>%
+      round()
+    
+    return(list(best_per_fold=best_per_fold, average_k_npcs_by_metric=average_k_npcs_by_metric, best_metric = best_metric, final_avg_k = final_avg_k, final_avg_n_pcs = final_avg_n_pcs))
+  }
+  
+}
+
 ```
 
 ## Threshold selection
 
+
 ```{r, include=FALSE}
-param_grid_thresholds <- list(
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best threshold...\n")
+  param_grid_thresholds <- list(
   n_pcs = c(30),  # Fixed n_pcs
   k_values = c(5),  # Fixed k
-  modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold
-  simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold
-  weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold
+  modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+  simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
+  weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
 )
 
-results_thresholds <- find_best_params(M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
-                                       param_grid=param_grid_thresholds, num_folds = 15, D, num_people_to_exclude=2)
+best_thresholds_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, D, num_people_to_exclude=2, compute_pca=TRUE)
 
+saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results.rds")
+}
 ```
 
 ```{r}
-# Step 1: Get the best threshold per fold and metric
-best_thresholds_per_fold <- results_thresholds %>%
-  group_by(Fold, Metric) %>%
-  slice_max(Balanced_Accuracy, n = 1, with_ties = FALSE) %>%  # Selects the best threshold per fold and metric
-  select(Fold, Metric, Threshold, Balanced_Accuracy) %>%
-  ungroup()
-
-print(best_thresholds_per_fold)
-
-# Step 2: Compute the average threshold per metric
-average_best_thresholds <- best_thresholds_per_fold %>%
-  group_by(Metric) %>%
-  summarise(Average_Threshold = mean(Threshold, na.rm = TRUE)) %>%
-  ungroup()
-
-print(average_best_thresholds)
-
-# Convert to named vector for easy access
-best_thresholds_vector <- average_best_thresholds %>%
-  pull(Average_Threshold, name = Metric)
-
+readRDS("best_thresholds_pca_results.rds")
 ```
 
 
 ## Metric, k, n_pcs selection
 
+
 ```{r, include=FALSE}
-param_grid_others <- list(
-  n_pcs = seq(10, 30, by=1),
-  #n_pcs = c(4),
-  k_values = seq(1, 10, by=1),
-  #k_values = c(1),
-  modified_sse = c(best_thresholds_vector["modified_sse"]),
-  simplified_mahalanobis = c(best_thresholds_vector["simplified_mahalanobis"]),
-  weighted_angle = c(best_thresholds_vector["weighted_angle"])
-)
-
-results_final <- find_best_params(Y, image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
-                                  param_grid=param_grid_others, num_folds = 15, D, num_people_to_exclude=2)
-
-```
-
-
-```{r}
-# Step 1: Get the best row per fold based on Balanced Accuracy
-best_per_fold <- results_final %>%
-  group_by(Fold) %>%
-  slice_max(Balanced_Accuracy, with_ties = FALSE)  # Selects the row with the highest Balanced Accuracy per fold
-
-print(best_per_fold)
-
-# Step 2: Compute the average k and n_pc by Metric
-average_k_npcs_by_metric <- best_per_fold %>%
-  group_by(Metric) %>%
-  summarise(
-    Occurrences = n(),
-    Average_k = mean(k, na.rm = TRUE),
-    Average_n_pcs = mean(n_pcs, na.rm = TRUE),
-    Average_Known_Accuracy = mean(Known_Accuracy, na.rm = TRUE),
-    Average_Unknown_Accuracy = mean(Unknown_Accuracy, na.rm = TRUE),
-    Average_Balanced_Accuracy = mean(Balanced_Accuracy, na.rm = TRUE)
-  ) %>%
-  ungroup()
-
-print(average_k_npcs_by_metric)
-
-# Step 3: Find the best metric (one with the highest average Balanced Accuracy)
-best_metric <- average_k_npcs_by_metric %>%
-  slice_max(Occurrences, with_ties = FALSE) %>%
-  pull(Metric)
-
-# Step 4: Compute the average k and n_pcs ONLY for the best metric
-final_avg_k <- average_k_npcs_by_metric %>%
-  filter(Metric == best_metric) %>%
-  pull(Average_k) %>%
-  round()
-
-final_avg_n_pcs <- average_k_npcs_by_metric %>%
-  filter(Metric == best_metric) %>%
-  pull(Average_n_pcs) %>%
-  round()
-
-# Print the results
-print(paste("Best Metric:", best_metric))
-print(paste("Final Average k:", final_avg_k))
-print(paste("Final Average n_pcs:", final_avg_n_pcs))
-
-```
-
-
-
-```{r}
-'''
-compute_avg_within_distances <- function(Y, image_ids) {
-  unique_ids <- unique(image_ids)  # Get unique person IDs
-  avg_distances <- numeric(length(unique_ids))  # Store results
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best params...\n")
+  best_thresholds_pca_results <- readRDS("best_thresholds_pca_results.rds")
+  best_thresholds_pca <- best_thresholds_pca_results$best_thresholds
   
-  for (i in seq_along(unique_ids)) {
-    person_id <- unique_ids[i]
-    indices <- which(image_ids == person_id)  # Find images of this person
-    
-    if (length(indices) > 1) {
-      # Compute all pairwise distances
-      pairwise_distances <- as.matrix(dist(Y[indices, ]))
-      avg_distances[i] <- mean(pairwise_distances[lower.tri(pairwise_distances)])  # Average of lower triangle
-    } else {
-      avg_distances[i] <- NA  # If only one image, no distance can be computed
-    }
-  }
+  param_grid_others <- list(
+    n_pcs = seq(10, 30, by=1),
+    #n_pcs = c(4),
+    k_values = seq(1, 10, by=1),
+    #k_values = c(1),
+    modified_sse = c(best_thresholds_pca["modified_sse"]),
+    simplified_mahalanobis = c(best_thresholds_pca["simplified_mahalanobis"]),
+    weighted_angle = c(best_thresholds_pca["weighted_angle"])
+  )
   
-  return(data.frame(Person = unique_ids, Avg_Distance = avg_distances))
+  best_params_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, D, num_people_to_exclude=2, compute_pca=TRUE)
+  
+  saveRDS(best_params_pca, "best_params_pca.rds")
 }
+```
 
-image_ids <- sapply(image_files, extract_id)
-# Compute average distances for each person
-within_person_distances <- compute_avg_within_distances(Y, image_ids)
-'''
+```{r}
+best_params_pca <- readRDS("best_params_pca.rds")
+best_params_pca
+```
+
+
+# Compare PCA vs Original image representation
+
+## Find best parameters original image representation.
+
+### Threshold selection
+
+
+```{r, include=FALSE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best parameters...\n")
+  param_grid_thresholds <- list(
+    n_pcs = c(30),  # Fixed n_pcs
+    k_values = c(5),  # Fixed k
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+    #simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
+    #weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+  )
+  
+  best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, D, num_people_to_exclude=2, compute_pca=FALSE)
+  
+  saveRDS(best_thresholds_no_pca_results, "best_thresholds_no_pca_results.rds")
+}
+```
+
+
+
+### Metric, k, n_pcs selection
+
+```{r, include=FALSE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best parameters...\n")
+  best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results.rds")
+  best_thresholds_no_pca <- best_thresholds_no_pca_results$best_thresholds
+  
+  param_grid_others <- list(
+    n_pcs = seq(10, 30, by=1),
+    #n_pcs = c(4),
+    k_values = seq(1, 10, by=1),
+    #k_values = c(1),
+    modified_sse = c(best_thresholds_no_pca["modified_sse"]),
+    #simplified_mahalanobis = c(best_thresholds_no_pca["simplified_mahalanobis"]),
+    #weighted_angle = c(best_thresholds_no_pca["weighted_angle"])
+  )
+  
+  best_params_no_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, D, num_people_to_exclude=2, compute_pca=FALSE)
+  
+  saveRDS(best_params_no_pca, "best_params_no_pca.rds")
+}
+```
+
+```{r}
+best_params_no_pca <- readRDS("best_params_no_pca.rds")
+best_params_no_pca
 ```
 
 
