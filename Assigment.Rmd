@@ -16,7 +16,7 @@ install.packages("OpenImageR")
 library(archive)
 library(dplyr)
 
-COMPUTE_GRID_SEARCH <- TRUE
+COMPUTE_GRID_SEARCH <- FALSE
 ```
 
 
@@ -313,8 +313,7 @@ create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_spl
 }
 
 run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_test, 
-                                   metrics, param_grid, fold, n_pc, E_pc) {
-  results <- list()
+                                   metrics, param_grid, fold, n_pc, E_pc, results) {
   
   for (metric in metrics) {
     if (!(metric %in% names(param_grid))) {
@@ -348,13 +347,12 @@ run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_t
   return(results)
 }
 
-find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, D, 
-                             num_people_to_exclude = 1, compute_pca = TRUE) {
+find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, num_people_to_exclude = 1, compute_pca = TRUE) {
   
   # Create random splits
   folds <- create_random_splits_by_image(image_ids, num_splits = num_folds, 
                                          num_people_to_exclude = num_people_to_exclude)
-  #results <- list()
+  results <- list()
   
   for (fold in seq_along(folds)) {
     test_indices <- folds[[fold]]$test
@@ -402,7 +400,7 @@ find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, D
         image_ids_test <- image_ids[test_indices]
         
         results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
-                               metrics, param_grid, fold, n_pc, E_pc)
+                               metrics, param_grid, fold, n_pc, E_pc, results)
       }
     } else {
       # No PCA: Use the entire dataset
@@ -413,7 +411,7 @@ find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, D
       image_ids_test <- image_ids[test_indices]
       
       results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
-                             metrics, param_grid, fold, n_pc = NA, E_pc = NULL)
+                             metrics, param_grid, fold, n_pc = NA, E_pc = NULL, results)
     }
   }
   
@@ -423,10 +421,10 @@ find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, D
 
 
 
-get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_ids, metrics, param_grid, num_folds = 5, D, num_people_to_exclude=1, compute_pca=TRUE){
+get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_ids, metrics, param_grid, num_folds = 5, num_people_to_exclude=1, compute_pca=TRUE){
 
-  results <- find_best_params(M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
-                                       param_grid=param_grid_thresholds, num_folds = num_folds, D, num_people_to_exclude=2, compute_pca=compute_pca)
+  results <- find_best_params(M=M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
+                                       param_grid=param_grid_thresholds, num_folds = num_folds, num_people_to_exclude=num_people_to_exclude, compute_pca=compute_pca)
   
   if(best_threshold){
     # Step 1: Get the best threshold per fold and metric
@@ -499,19 +497,18 @@ get_best_params <- function(best_threshold=TRUE, param_grid_thresholds, M,image_
 
 ## Threshold selection
 
-
 ```{r, include=FALSE}
 if(COMPUTE_GRID_SEARCH){
   cat("Finding best threshold...\n")
   param_grid_thresholds <- list(
-  n_pcs = c(30),  # Fixed n_pcs
-  k_values = c(5),  # Fixed k
-  modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
-  simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
-  weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
-)
+    n_pcs = c(30),  # Fixed n_pcs
+    k_values = c(5),  # Fixed k
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+  )
 
-best_thresholds_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, D, num_people_to_exclude=2, compute_pca=TRUE)
+best_thresholds_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
 
 saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results.rds")
 }
@@ -541,7 +538,7 @@ if(COMPUTE_GRID_SEARCH){
     weighted_angle = c(best_thresholds_pca["weighted_angle"])
   )
   
-  best_params_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, D, num_people_to_exclude=2, compute_pca=TRUE)
+  best_params_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
   
   saveRDS(best_params_pca, "best_params_pca.rds")
 }
@@ -571,7 +568,7 @@ if(COMPUTE_GRID_SEARCH){
     weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
   )
   
-  best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, D, num_people_to_exclude=2, compute_pca=FALSE)
+  best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE,param_grid_thresholds, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
   
   saveRDS(best_thresholds_no_pca_results, "best_thresholds_no_pca_results.rds")
 }
@@ -597,7 +594,7 @@ if(COMPUTE_GRID_SEARCH){
     weighted_angle = c(best_thresholds_no_pca["weighted_angle"])
   )
   
-  best_params_no_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, D, num_people_to_exclude=2, compute_pca=FALSE)
+  best_params_no_pca <- get_best_params(best_threshold=FALSE,param_grid_others, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
   
   saveRDS(best_params_no_pca, "best_params_no_pca.rds")
 }
