@@ -301,12 +301,6 @@ knn_classifier(5, 100, y_new, Y, image_ids, 'modified_sse', E)
 
 
 # Parameter selection
-
-1. Perform a k-fold cross-validation to decide the k, the treshold, and the PCs taken, and similarity metric. We need to define a metric to maximize.
-
-## Threshold selection
-
-
 ```{r}
 create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_splits = 5, num_people_to_exclude = 1) {
   
@@ -353,30 +347,6 @@ create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_spl
 #splits_by_img <- create_random_splits_by_image(image_ids, num_people_to_exclude=1)
 #splits_by_img
 ```
-
-
-```{r}
-#Not used
-create_random_splits_by_people <- function(image_ids, percent_test = 0.2, num_splits = 5) {
-  unique_ids <- unique(image_ids)
-  
-  splits <- lapply(1:num_splits, function(i) {
-
-    test_people <- sample(unique_ids, round(length(unique_ids) * percent_test))
-    # Get indices for test and train
-    test_indices <- which(image_ids %in% test_people)
-    
-    train_people <-sample(unique_ids, round(length(unique_ids) * (1-percent_test)))
-    train_indices <- which(image_ids %in% train_people)
-    return(list(train = train_indices, test = test_indices))
-  })
-  
-  return(splits)
-}
-
-#threshold_splits <- create_random_splits_by_people(image_ids)
-```
-
 
 ```{r}
 find_best_params <- function(M,image_ids, metrics, param_grid, num_folds = 5, D, num_people_to_exclude=1) {
@@ -442,6 +412,8 @@ find_best_params <- function(M,image_ids, metrics, param_grid, num_folds = 5, D,
 
 ```
 
+## Threshold selection
+
 ```{r, include=FALSE}
 param_grid_thresholds <- list(
   n_pcs = c(30),  # Fixed n_pcs
@@ -454,10 +426,6 @@ param_grid_thresholds <- list(
 results_thresholds <- find_best_params(M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), 
                                        param_grid=param_grid_thresholds, num_folds = 15, D, num_people_to_exclude=2)
 
-```
-
-```{r}
-results_thresholds
 ```
 
 ```{r}
@@ -485,20 +453,7 @@ best_thresholds_vector <- average_best_thresholds %>%
 ```
 
 
-```{r}
-best_thresholds <- results_thresholds %>%
-  group_by(Metric) %>%
-  slice_max(Balanced_Accuracy, n = 1, with_ties = FALSE) %>%  # Ensures only one row per metric
-  select(Metric, Threshold, Balanced_Accuracy) %>%
-  ungroup()  # Remove grouping for a clean dataframe
-
-print(best_thresholds)
-
-best_thresholds_vector <- best_thresholds %>%
-  pull(Threshold, name = Metric)
-
-```
-
+## Metric, k, n_pcs selection
 
 ```{r, include=FALSE}
 param_grid_others <- list(
@@ -562,6 +517,7 @@ print(paste("Final Average k:", final_avg_k))
 print(paste("Final Average n_pcs:", final_avg_n_pcs))
 
 ```
+
 
 
 ```{r}
