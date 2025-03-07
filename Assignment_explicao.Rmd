@@ -58,11 +58,11 @@ get_sorted_filenames <- function(){
 
 Once the filenames are sorted, the code proceeds to load and process the images. The sorted list of image file paths is stored in `image_files`, and the numeric IDs are extracted again for potential labeling or further processing. The script then iterates over each file, loading the image using `OpenImageR::readImage()`. Since the images are in color, the code handles each of the three channels (red, green, and blue) separately. For each channel, the two-dimensional array representing the pixel intensities is flattened into a one-dimensional vector using `as.vector()`. These three vectors are then concatenated into a single vector, effectively transforming each image into a long vector that contains all the pixel values sequentially.
 
-Then each channel is flattened into vectors $$r, g, b \in \mathbb{R}^{HW}$$ and concatenated as:
+Then each channel is flattened into vectors $r, g, b \in \mathbb{R}^{HW}$ and concatenated as:
 
-$$$$
+$$
 \mathbf{x} = \begin{bmatrix} r \\ g \\ b \end{bmatrix} \in \mathbb{R}^{3HW}.
-$$$$
+$$
 
 Each of these vectors is stored in a list, with the file name as the key.
 ```{r}
@@ -92,7 +92,7 @@ M <- do.call(rbind, image_rows)
 # Check dimensions (rows = number of images, columns = total pixels * 3)
 dim(M)
 ```
-After processing all images, the list of vectors is converted into a matrix $$M$$ using the `do.call(rbind, image_rows)` function. In this matrix, each row corresponds to one image, and each column represents a pixel value from one of the channels, so that if there are $$n$$ images and each image has $$d = 3 \times H \times W$$ features, $$M$$ becomes an $$n \times d$$ matrix. The final command, `dim(M)`, is used to display the dimensions of $$M$$ and verify that the data has been structured correctly. This pre-processing is fundamental as it sets up the data in the appropriate high-dimensional format.
+After processing all images, the list of vectors is converted into a matrix $M$ using the `do.call(rbind, image_rows)` function. In this matrix, each row corresponds to one image, and each column represents a pixel value from one of the channels, so that if there are $n$ images and each image has $d = 3 \times H \times W$ features, $M$ becomes an $n \times d$ matrix. The final command, `dim(M)`, is used to display the dimensions of $M$ and verify that the data has been structured correctly. This pre-processing is fundamental as it sets up the data in the appropriate high-dimensional format.
 
 # Part A
 
@@ -106,7 +106,7 @@ where $X_c$ represents the centered data matrix. This smaller covariance matrix 
 
 Next, an eigen-decomposition is performed on this smaller covariance matrix using the `eigen` function, which returns a set of eigenvalues and eigenvectors. Since these eigenvectors are computed in the space of the $n \times n$ matrix, they do not directly represent the directions in the original high-dimensional pixel space. To map them back, the function multiplies the transpose of the centered data by these eigenvectors. This operation effectively transfers the principal component directions to the original space. After this, each column (which represents an eigenvector in pixel space) is normalized by dividing it by its Euclidean norm, ensuring that every principal component has unit length.
 
-Finally, the function computes the proportion of variance explained by each principal component. This is done by dividing each eigenvalue by the sum of all eigenvalues, resulting in a normalized vector of explained variances. The function then returns a list containing the mean vector (`mean_obs`), the matrix of normalized eigenvectors (`P`), the vector of explained variance proportions (`D`), and the raw eigenvalues (`E`). After running `pca_results <- compute_pca(M)`, these variables store the respective results, setting the stage for subsequent analysis such as dimensionality reduction and facial recognition using the principal component representation.
+Finally, the function computes the proportion of variance explained by each principal component. This is done by dividing each eigenvalue by the sum of all eigenvalues, resulting in a normalized vector of explained variances. The function then returns a list containing the mean vector (`mean_obs`), the matrix of normalized eigenvectors (`P`), the vector of explained variance proportions (`D`), and the raw eigenvalues (`E`). After running `pca_results <- compute_pca(M)`, these variables store the respective results, setting the stage for subsequent analysis. 
 ```{r}
 #compute_pca <- function(data) {
   # Compute mean
@@ -214,8 +214,6 @@ plot_pca_3d_interactive(Y, image_ids)
 ```
 
 # FDA
-
-#### AUTOVALORES COMLEJOS comentar
 
 The function `fda` is designed to perform Fisher Discriminant Analysis (FDA) on a dataset, where the input matrix $Y$ has dimensions $n \times p$ and its last column represents the class labels. Initially, the function extracts the class labels from the last column of $Y$ and converts them into a factor to properly identify the different groups. The remaining columns of $Y$ form the feature matrix $X$, which contains the observations used for the FDA.
 
@@ -336,16 +334,56 @@ reduced_FDA_proj <- FDA_proj[, 1:24]
 the following distance measures: simplified Mahalanobis, weighted angle-based distance, proposed modified SSE-based distance, angle-based distance between whitened feature vectors."
 
 
+### 
+The function `project_image` takes an image represented as a vector and projects it onto the PCA subspace defined by the eigenvector matrix $P$. It does this by first centering the image vector with respect to the mean observation, subtracting $mean\_obs$ from the image vector. This centering ensures that the image is expressed relative to the overall data mean. Then, the function multiplies the transposed eigenvector matrix $P^T$ with the centered image. In mathematical terms, if $x$ is the original image vector and $m$ is the mean, the projection $y$ is computed as
+
+$$
+y = P^T (x - m).
+$$
+
+This operation transforms the image into the principal component space, where each element of the resulting vector represents the coordinate along a corresponding principal component.
 
 ```{r}
 project_image <- function(image_vector, mean_obs, P) {
   centered_image <- image_vector - mean_obs
   return(t(P) %*% centered_image)
 }
-
 #new_image_vector <- as.vector(OpenImageR::readImage(image_files[1]))
 #y_new <- project_image(new_image_vector, mean_obs, V)
+```
 
+
+The next function, `compute_distance`, is designed to calculate the distance between two projected vectors, $x$ and $y$, using one of three different metrics. The metric is selected by the parameter `metric`, and the function also takes in a vector of eigenvalues $E$, which are used in the weighting schemes.
+
+For the metric labeled `"simplified_mahalanobis"`, a constant $\alpha = 0.25$ is defined. The function computes a weighting vector $z$ as
+
+$$
+z = \sqrt{\max\left(0, \frac{E}{E + \alpha^2}\right)},
+$$
+
+and then returns the negative sum of the element-wise product of $z$, $x$, and $y$. The negative sum indicates that, for classification purposes, lower values correspond to closer matches.
+
+If the metric `"weighted_angle"` is chosen, the function computes a different weighting vector by taking
+
+$$
+z = \sqrt{\max\left(0, \frac{1}{E}\right)},
+$$
+
+and returns the negative weighted inner product of $x$ and $y$, normalized by the product of their Euclidean norms. This is expressed as
+
+$$
+\text{distance} = -\frac{\sum_i z_i \, x_i \, y_i}{\sqrt{\sum_i x_i^2} \sqrt{\sum_i y_i^2}},
+$$
+
+which resembles a cosine similarity measure with weights, again with the negative sign ensuring that a higher similarity results in a lower distance value.
+
+Lastly, for the `"modified_sse"` metric, the function computes a normalized squared error by taking the sum of the squared differences between the corresponding elements of $x$ and $y$, divided by the product of the sums of squares of $x$ and $y$, given by
+
+$$
+\text{distance} = \frac{\sum_i (x_i - y_i)^2}{\left(\sum_i x_i^2\right)\left(\sum_i y_i^2\right)}.
+$$
+
+```{r}
 # Computes the distance between 2 vectors. D is the eigenvalue list, required for some metrics. 
 compute_distance <- function(x, y, E, metric) {
     
@@ -365,7 +403,22 @@ compute_distance <- function(x, y, E, metric) {
       stop("Invalid metric. Choose from 'simplified_mahalanobis', 'weighted_angle', or 'modified_sse'.")
     }
 }
+```
 
+The function `knn_classifier` implements a k-nearest neighbors (k-NN) classifier on projected data. It takes several parameters: the number of neighbors $k$, a similarity threshold, the new image's projected vector $y_{\text{new}}$, a matrix $Y$ containing the projected representations of the training images (one per row), the corresponding image IDs, a string `metric` indicating which distance metric to use, and a vector $E$ of eigenvalues required by the chosen metric.
+
+The function first computes the distances between the new image $y_{\text{new}}$ and every row of $Y$. This is achieved by applying the `compute_distance` function to each row, which calculates the similarity according to the selected metric. The resulting distances are stored in a vector, and a data frame is created with two columns: one for the image IDs and another for the computed distances.
+
+After obtaining the distance values, the data frame is sorted in ascending order by distance. The assumption here is that a lower distance indicates greater similarity. The function then selects the $k$ nearest neighbors (i.e., the $k$ rows with the smallest distances). Instead of computing an average distance—which might be misleading if the metric produces both positive and negative values—the function considers the minimum distance among these $k$ neighbors as the decisive measure. This minimum distance is compared against a pre-set threshold: if the smallest distance is greater than the threshold, the function returns $0$, signifying that the new image is too dissimilar from any training image to be confidently recognized.
+
+If the minimum distance is within the acceptable threshold, the function then examines the class IDs of the $k$ nearest neighbors. It counts the occurrences of each ID and returns the majority class (i.e., the ID that appears most frequently). This classification decision is based on the intuition that if the new image is similar to several images from a particular class, it likely belongs to that same class.
+
+In summary, the decision rule can be viewed as: if 
+$$
+\min \{d(y_{\text{new}}, y_i) : y_i \in \text{k nearest neighbors}\} > \text{threshold},
+$$ 
+then return $0$, otherwise classify $y_{\text{new}}$ according to the majority label among its $k$ nearest neighbors.
+```{r}
 knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
   #cat("length(y_new): ", length(y_new), '\n')
   #cat("dim(Y): ", dim(Y), '\n')
@@ -405,6 +458,15 @@ knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
 
 # Parameter selection
 
+The function `create_random_splits_by_image` is designed to generate multiple random training and test splits based on image identifiers, while ensuring that a specified number of unique subjects (or classes) are completely excluded from the training set in each split. The input parameter `image_ids` represents the class labels associated with each image, and parameters such as `percent_test`, `num_splits`, and `num_people_to_exclude` allow the user to control the proportion of test data, the number of splits, and the number of subjects to exclude from training, respectively.
+
+At the beginning of the function, a fixed random seed is set using `set.seed(1)` to guarantee reproducibility of the random splits. The function then extracts the unique class labels from `image_ids` (denoted as the set of people) and proceeds to create the splits using `lapply`. For each split, the function randomly selects a subset of subjects to exclude from the training set. These excluded subjects are forced into the test set by finding the indices of images whose labels match the selected subjects.
+
+After determining the excluded indices, the function constructs the test set by first sampling a percentage (given by `percent_test`) of the remaining images—that is, those images not belonging to the excluded subjects. Then, it combines these sampled indices with the indices corresponding to the excluded subjects, ensuring that all images from the excluded classes are included in the test set. The training set is formed by taking all indices that are not in the test set. In mathematical terms, if $T$ represents the set of test indices and $E$ represents the excluded indices, then the final test set is $T \cup E$, and the training set is defined as the complement of $T \cup E$ within the full set of image indices.
+
+The function also provides diagnostic output by printing the excluded subjects along with the sizes of the test and training splits. It then checks for any classes that appear in the test set but not in the training set by comparing the unique class labels present in each set. If such cases are found, it prints a message indicating which subjects are missing from the training set and returns their indices as part of the split information.
+
+In the end, the function returns a list of splits, where each split is a list containing the training indices, test indices, and any indices corresponding to missing classes. This approach is particularly useful to ensure that some subjects are completely unseen during training and can help evaluating the generalization and robustness of the classifier.
 ```{r}
 create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_splits = 5, num_people_to_exclude = 1) {
   set.seed(1)
@@ -447,7 +509,10 @@ create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_spl
   
   return(splits)
 }
+```
 
+
+```{r}
 run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_test, 
                                    metrics, param_grid, fold, n_pc, E_pc, results) {
   
@@ -482,6 +547,10 @@ run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_t
   }
   return(results)
 }
+```
+
+```{r}
+
 
 find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, num_people_to_exclude = 1, compute_pca = TRUE) {
   
