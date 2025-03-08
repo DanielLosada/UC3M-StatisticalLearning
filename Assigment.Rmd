@@ -313,6 +313,8 @@ The procedure is the following:
   
   2. Once found the threshold for each metric that maximizes the balanced accuracy among all the splits, perform a grid search among the other parameters keeping the best threshold found fixed. This will be done in `n` random train/test splits. The best parameters will be those that in average are best.
   
+The justification of this methodology relies on the randomness of the splits. A potential issue with optimizing a threshold on a single split is that it may overfit to the specific individuals present in that split, leading to poor generalization when applied to new data. By evaluating multiple train/test splits where the test set always contains individuals not seen in training, we mitigate this risk by averaging performance across diverse scenarios. This approach helps smooth out variability and ensures that the chosen threshold is not overly sensitive to a particular split but instead represents a robust choice across different partitions of the dataset. We apply the same methodology to the other parameters, reinforcing the generalizability of the final model selection. 
+
 Now we will describe the functions used for that.
 
 The function `create_random_splits_by_image` is designed to generate multiple random training and test splits based on image identifiers, while ensuring that a specified number of unique subjects (or classes) are completely excluded from the training set in each split. The input parameter `image_ids` represents the class labels associated with each image, and parameters such as `percent_test`, `num_splits`, and `num_people_to_exclude` allows us to control the proportion of test data, the number of splits, and the number of subjects to exclude from training and include their images in testing, respectively.
@@ -712,4 +714,9 @@ best_params_no_pca
 ```
 
 
+# Conclusions
+
+The results show that applying PCA before KNN improves balanced accuracy (0.981 vs. 0.943) while significantly reducing computation time. Even if we expected a larger performance gap, the similarity in results suggests that KNN can still work well in high-dimensional spaces when properly tuned. Notice that the difference in balanced accuracy is not that big, but we can appreciate a bigger difference if we take a look to the known accuracy, suggesting that the model that is not using PCA, is finding more problems in correctly classifying the known faces. The PCA approach retains enough variance to achieve strong recognition while making training and inference more efficient. 
+
+We should choose the PCA-based KNN model because it achieves better accuracy while drastically reducing computation time and memory usage. It is more scalable, less prone to overfitting, and provides a more efficient representation of facial features without sacrificing recognition performance.
 
