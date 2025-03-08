@@ -118,12 +118,16 @@ compute_pca <- function(data) {
   var_cov_small <- (1 / (n - 1)) * (centered_matrix %*% t(centered_matrix))
   eigen_dec <- eigen(var_cov_small)
   
-  P <- t(centered_matrix) %*% eigen_dec$vectors
-  P <- apply(P, 2, function(p) p / sqrt(sum(p^2)))
+  sort_eigen_dec <- order(eigen_dec, decreasing = TRUE)
+  P <- eigen_dec$vectors[, sort_eigen_dec]
+  #P <- t(centered_matrix) %*% eigen_dec$vectors
+  #P <- apply(P, 2, function(p) p / sqrt(sum(p^2)))
   
-  D <- eigen_dec$values / sum(eigen_dec$values)
+  eigenvalues <- eigen_dec$values[sort_eigen_dec]
+  #D <- eigen_dec$values / sum(eigen_dec$values)
+  D <- eigenvalues/sum(eigen_dec$values)
 
-  return(list(mean_obs = mean_m, P = P, D = D, E = eigen_dec$values))
+  return(list(mean_obs = mean_m, P = P, D = D, E = eigenvalues))
 }
 
 pca_results <- compute_pca(M)
