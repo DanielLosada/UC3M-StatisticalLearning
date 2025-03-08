@@ -13,7 +13,7 @@ library(archive)
 library(dplyr)
 library(plotly)
 
-COMPUTE_GRID_SEARCH <- FALSE
+COMPUTE_GRID_SEARCH <- TRUE
 ```
 
 
@@ -590,13 +590,13 @@ if(COMPUTE_GRID_SEARCH){
 
 best_thresholds_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
 
-saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results.rds")
+saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results_daniel.rds")
 }
 ```
 
-```{r}
 
-best_thresholds_pca_results <- readRDS("best_thresholds_pca_results.rds")
+```{r}
+best_thresholds_pca_results <- readRDS("best_thresholds_pca_results_daniel.rds")
 
 best_thresholds_pca_results$best_thresholds_per_fold
 best_thresholds_pca_results$average_best_thresholds
@@ -627,12 +627,13 @@ if(COMPUTE_GRID_SEARCH){
   
   best_params_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
   
-  saveRDS(best_params_pca, "best_params_pca.rds")
+  saveRDS(best_params_pca, "best_params_pca_daniel.rds")
 }
 ```
 
+
 ```{r}
-best_params_pca <- readRDS("best_params_pca.rds")
+best_params_pca <- readRDS("best_params_pca_daniel.rds")
 
 best_params_pca$best_per_fold
 best_params_pca$average_k_npcs_by_metric
@@ -663,12 +664,12 @@ if(COMPUTE_GRID_SEARCH){
   
   best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
   
-  saveRDS(best_thresholds_no_pca_results, "best_thresholds_no_pca_results.rds")
+  saveRDS(best_thresholds_no_pca_results, "best_thresholds_no_pca_results_daniel.rds")
 }
 ```
 
 ```{r}
-best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results.rds")
+best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results_daniel.rds")
 
 best_thresholds_no_pca_results$best_thresholds_per_fold
 best_thresholds_no_pca_results$average_best_thresholds
@@ -696,12 +697,13 @@ if(COMPUTE_GRID_SEARCH){
   
   best_params_no_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
   
-  saveRDS(best_params_no_pca, "best_params_no_pca.rds")
+  saveRDS(best_params_no_pca, "best_params_no_pca_daniel.rds")
 }
 ```
 
+
 ```{r}
-best_params_no_pca <- readRDS("best_params_no_pca.rds")
+best_params_no_pca <- readRDS("best_params_no_pca_daniel.rds")
 best_params_no_pca
 ```
 
