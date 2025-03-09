@@ -1,11 +1,15 @@
 ---
-title: "Assigment"
-output: html_document
+title: "Assignment"
+output:
+  pdf_document: default
+  html_document: default
 date: "2025-02-25"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
 ```
 
 ```{r}
@@ -13,11 +17,11 @@ library(archive)
 library(dplyr)
 library(plotly)
 
-COMPUTE_GRID_SEARCH <- TRUE
+COMPUTE_GRID_SEARCH <- FALSE
 ```
 
 
-## Input data
+## 0. Input data
 
 Let's begin by discussing the first step of our code, which handles extracting the image data stored in a compressed archive. We start by specifying the file name `"Training.rar"`, which contains all of our images. To extract the contents, we use the `archive_extract()` function from the archive package. We wrap this call in a `try()` block with the parameter `silent = TRUE`. This is a safeguard: if an error occurs during extraction(for example, if the archive has already been extracted), and we can smoothly continue with the rest of the processing.
 
@@ -94,7 +98,7 @@ M <- do.call(rbind, image_rows)
 dim(M)
 ```
 
-## PCA
+## 1. PCA
 
 The function `compute_pca` begins by calculating the mean vector of the input data matrix, where each column corresponds to a feature (in our case, pixel values). We use the `colMeans` function to compute this mean and store it in the variable `mean_m`. Immediately afterward, we center the data by subtracting this mean from every observation. We achieve this centering using the `sweep` function, which subtracts the mean from each column of the data matrix, ensuring that the new data matrix has a zero mean along every dimension.
 
@@ -106,7 +110,7 @@ $$
 
 where $X_c$ represents our centered data matrix. This smaller covariance matrix is computationally more efficient to work with when the dimensionality is very high.
 
-Next, we perform an eigen-decomposition on this smaller covariance matrix using the `eigen` function, which returns a set of eigenvalues and eigenvectors. Because these eigenvectors are computed in the space of the $n \times n$ matrix, they do not directly represent the directions in the original high-dimensional pixel space. To map them back, the function multiplies the transpose of the centered data by these eigenvectors. This operation effectively transfers the principal component directions back into the original space. After that, we normalize each column—each representing an eigenvector in pixel space—by dividing it by its Euclidean norm, ensuring that every principal component has unit length.
+Next, we perform an eigen-decomposition on this smaller covariance matrix using the `eigen` function, which returns a set of eigenvalues and eigenvectors. Because these eigenvectors are computed in the space of the $n \times n$ matrix, they do not directly represent the directions in the original high-dimensional pixel space. To map them back, the function multiplies the transpose of the centered data by these eigenvectors. This operation effectively transfers the principal component directions back into the original space. After that, we normalize each column (each representing an eigenvector in pixel space) by dividing it by its Euclidean norm, ensuring that every principal component has unit length.
 
 Finally, we compute the proportion of variance explained by each principal component. This is done by dividing each eigenvalue by the sum of all eigenvalues, which gives us a normalized vector of explained variances. The function then returns a list containing the mean vector (`mean_obs`), the matrix of normalized eigenvectors (`P`), the vector of explained variance proportions (`D`), and the raw eigenvalues (`E`). 
 
@@ -148,7 +152,7 @@ E <- pca_results$E #eigenvalues
 #V <- pca_results$V #eigenvectors in pixel space normalized
 ```
 
-### PCA Visualization 
+### 1.1. PCA Visualization 
 
 The projection of the images in the pca space will be the following:
 
@@ -163,9 +167,9 @@ The function `visualize_pc` lets us see how a specific principal component contr
 
 To visualize this, we reconstruct the image by scaling the principal component by that coordinate and then adding back the overall mean image vector. Mathematically, we compute:
 $$
-x\_pc1 = y1 \times p1 + \text{mean\_obs},
+x_pc1 = y_1 \times p_1 + \text{mean_obs},
 $$
-where $p1$ is the chosen principal component and $y1$ is the image’s coordinate along this component. Once we have this reconstructed vector, we reshape it into the original image dimensions (height, width, and 3 color channels) to form an image matrix that we can display using `OpenImageR::imageShow()`.
+where $p_1$ is the chosen principal component and $y_1$ is the image’s coordinate along this component. Once we have this reconstructed vector, we reshape it into the original image dimensions (height, width, and 3 color channels) to form an image matrix that we can display using `OpenImageR::imageShow()`.
 
 ```{r}
 visualize_pc <- function(image_index, pc, mean_obs, P, Y, img_height = 200, img_width = 180) {
@@ -214,7 +218,7 @@ plot_pca_3d_interactive(Y, image_ids)
 ```
 
 
-## FDA
+## 2. FDA
 
 The function `fda` is designed to perform Fisher Discriminant Analysis (FDA) on a dataset, where the input matrix $Y$ has dimensions $n \times p$ and its last column represents the class labels. We begin by extracting the class labels from the last column of $Y$ and converting them into a factor so that we can properly identify the different groups. The remaining columns of $Y$ form the feature matrix $X$, which contains the observations that we will use for the FDA.
 
@@ -295,20 +299,20 @@ fda <- function(Y) {
 }
 ```
 
-## KNN
+## 3. KNN
 
 The face recognition will be performed using a KNN algorithm. Given a new image of a person, the system should recognize whose person it is in case we have it in the dataset, or classify it as an unknown person if it doesn't. The algorithm follows these steps:
 
 - 1. Take the vector of the image to classify and compute the distance to all the other images of the dataset.
 - 2. Sort the distances by ascending order.
-- 3. Take the k closest samples and the person id corresponding to it.
-- 4. The predicted person id is the majority id among the k closest neighbors.
+- 3. Take the $k$ closest samples and the person id corresponding to it.
+- 4. The predicted person id is the majority id among the $k$ closest neighbors.
 - 5. Take the distance of the closest neighbor, and if is larger than a threshold, the person on the image is considered as an unknown person.
 
 
-### Computing Distances 
+### 3.1. Computing Distances 
 
-As our k-NN classifier relies on computing distances between vectors, we decided to try three different metrics that showed promising results in the paper "Distance measures for PCA-based face recognition." We implemented these metrics—"simplified_mahalanobis", "weighted_angle", and "modified_sse"—to see which one works best for our application.
+As our KNN classifier relies on computing distances between vectors, we decided to try three different metrics that showed promising results in the paper "Distance measures for PCA-based face recognition." We implemented these metrics( "`simplified_mahalanobis`", "`weighted_angle`", and "`modified_sse`") to see which one works best for our application.
 
 The function `compute_distance` is designed to calculate the distance between two vectors, $x$ and $y$, using one of the three metrics. We choose the metric via the parameter `metric`, and the function also takes a vector of eigenvalues $E$ that is used to compute the weights in some of these distance measures.
 
@@ -362,13 +366,13 @@ compute_distance <- function(x, y, E, metric) {
 }
 ```
 
-### KNN Clasiffier
+### 3.2. KNN Clasiffier
 
-The function `knn_classifier` implements a k-nearest neighbors (k-NN) classifier. It takes several parameters: the number of neighbors $k$, a similarity threshold, the new image’s vector $y_{\text{new}}$, a matrix $Y$ containing the representations of the training images (one per row), the corresponding image IDs, a string `metric` indicating which distance metric to use, and a vector $E$ of eigenvalues required by some metrics.
+The function `knn_classifier` implements a k-nearest neighbors (KNN) classifier. It takes several parameters: the number of neighbors $k$, a similarity threshold, the new image’s vector $y_{\text{new}}$, a matrix $Y$ containing the representations of the training images (one per row), the corresponding image IDs, a string `metric` indicating which distance metric to use, and a vector $E$ of eigenvalues required by some metrics.
 
 The function first computes the distances between the new image $y_{\text{new}}$ and every row of $Y$. This is achieved by applying the `compute_distance` function to each row, which calculates the similarity according to the selected metric. The resulting distances are stored in a vector, and a data frame is created with two columns: one for the image IDs and another for the computed distances.
 
-After obtaining the distance values, the data frame is sorted in ascending order by distance. The assumption here is that the closer two images are in the space, the greater similarity. The function then selects the $k$ nearest neighbors (i.e., the $k$ rows with the smallest distances). Instead of computing an average distance—which might be misleading if the metric produces both positive and negative values—the function considers the minimum distance among these $k$ neighbors as the decisive measure. This minimum distance is compared against a pre-set threshold: if the smallest distance is greater than the threshold, the function returns $0$, signifying that the new image is too dissimilar from any training image to be confidently recognized. This relies on the assumption that if the closest image is already too far to consider the new image as part of the dataset, the rest of the images too.
+After obtaining the distance values, the data frame is sorted in ascending order by distance. The assumption here is that the closer two images are in the space, the greater similarity. The function then selects the $k$ nearest neighbors (i.e., the $k$ rows with the smallest distances). Instead of computing an average distance, which might be misleading if the metric produces both positive and negative values, the function considers the minimum distance among these $k$ neighbors as the decisive measure. This minimum distance is compared against a pre-set threshold: if the smallest distance is greater than the threshold, the function returns $0$, signifying that the new image is too dissimilar from any training image to be confidently recognized. This relies on the assumption that if the closest image is already too far to consider the new image as part of the dataset, the rest of the images too.
 
 If the minimum distance is within the acceptable threshold, the function then examines the class IDs of the $k$ nearest neighbors. It counts the occurrences of each ID and returns the majority class (i.e., the ID that appears most frequently). This classification decision is based on the intuition that if the new image is similar to several images from a particular class, it likely belongs to that same class.
 
@@ -408,7 +412,7 @@ knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
 ```
 
 
-## Parameter Selection
+## 4. Parameter Selection
 
 We will perform a two steps grid search trying to maximize the balanced accuracy. We could do it in one step, and the results will be probably better, but this approach will highly reduce the computation time.
 
@@ -475,7 +479,7 @@ create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_spl
 ```
 
 
-### Run KNN Clssification
+### 4.1. Run KNN Clssification
 
 The following functions will be used to find the best parameters (explained later). 
 
@@ -517,7 +521,7 @@ run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_t
 }
 ```
 
-### Find Best Parameters
+### 4.2. Find Best Parameters
 
 Our function `find_best_params` plays a pivotal role in our grid search for optimal classifier parameters by separating the parts of the search process that differ between classifiers that use PCA and those that do not. This function receives a boolean parameter `compute_pca` which, if TRUE, instructs us to compute PCA using only the training images, and then to project all the images into the PCA space. We then iterate over the number of principal components specified in the parameter grid and call `run_knn_classification` for each set of components to continue with the grid search and obtain classification results. Moreover, if the boolean parameter `apply_fda` is set to TRUE, after computing the PCA projection we further apply FDA on the PCA matrix by appending the class labels and computing FDA on these principal components. It is important to note that when `apply_fda` is TRUE, only the `modified_sse` metric is used because employing either the eigenvalues from the FDA or the PCA does not make sense in that context. On the other hand, if `compute_pca` is FALSE, we also force the metric to be `modified_sse` since the other metrics rely on eigenvalues derived from PCA. In either case, `find_best_params` ultimately calls `run_knn_classification` to continue with the grid search.
 
@@ -623,9 +627,9 @@ find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5,
 
 ```
 
-### Get Best Parameters
+### 4.3. Get Best Parameters
 
-The function `get_best_params` is used to handle the grid search for optimal classifier parameters, either for finding the best threshold for each distance metric or for determining the best values of k and `n_pc` (and, if applicable, FDA dimensions) by fold. This function accepts several parameters: 
+The function `get_best_params` is used to handle the grid search for optimal classifier parameters, either for finding the best threshold for each distance metric or for determining the best values of $k$ and `n_pc` (and, if applicable, FDA dimensions) by fold. This function accepts several parameters: 
 
 * `best_threshold`: Boolean indicating if we are looking for the best threshold or not.
 * `M`: Matrix with the raw RGB image representation. One image by row.
@@ -638,7 +642,7 @@ The function `get_best_params` is used to handle the grid search for optimal cla
 
 If `best_threshold` is TRUE, the function returns a data structure that includes a data frame containing the best threshold per fold and per metric, another data frame with the average best threshold by metric, and a simpler, easily accessible vector of the best thresholds per metric. In this mode, the function identifies, for each fold and each metric, the threshold that yields the highest balanced accuracy, and then aggregates these results across folds.
 
-On the other hand, if `best_threshold` is FALSE, the function focuses on finding the optimal k (number of neighbors) and `n_pc` (number of principal components) by fold. It returns a data frame that contains the best k and `n_pc` values for each fold, a summary data frame that provides the average best k, average best `n_pc`, and average accuracy scores per metric, and additional information about which metric was the best (i.e., the one that performed best in the most folds) along with the average k and `n_pc` for that metric. Importantly, when `apply_fda` is set to TRUE, the function adds the same information about FDA dimensions as the information gathered for `n_pc`.
+On the other hand, if `best_threshold` is FALSE, the function focuses on finding the optimal $k$ (number of neighbors) and `n_pc` (number of principal components) by fold. It returns a data frame that contains the best $k$ and `n_pc` values for each fold, a summary data frame that provides the average best $k$, average best `n_pc`, and average accuracy scores per metric, and additional information about which metric was the best (i.e., the one that performed best in the most folds) along with the average k and `n_pc` for that metric. Importantly, when `apply_fda` is set to TRUE, the function adds the same information about FDA dimensions as the information gathered for `n_pc`.
 
 ```{r}
 
@@ -736,9 +740,9 @@ get_best_params <- function(best_threshold = TRUE, M, image_ids, metrics, param_
 }
 ```
 
-## PCA-KNN
+## 5. PCA-KNN
 
-### Threshold selection
+### 5.1. Threshold selection
 
 As it's explained before, the rest of parameters will be fixed on this stage. The ranges of thresholds for each metric were selected by trying the distances manually between images of the same person and between images of different person. We took the min and the max distance among different trials, and the ranges are made so those min and max values found are included.
 
@@ -770,9 +774,9 @@ best_thresholds_pca_results$best_thresholds
 ```
 
 
-### Metric, k, n_pcs selection
+### 5.2 Metric, k, n_pcs selection
 
-In the previous step, we found the best threshold for each metric. So now we have fixed those values. We will iterate over the first 30 number of components. We chose that number because at any trial we did during the implementation we found better results above that number, so in order to save computational time, we limit the number of components to try. The same argument applies to the decision of trying k up to 10.
+In the previous step, we found the best threshold for each metric. So now we have fixed those values. We will iterate over the first 30 number of components. We chose that number because at any trial we did during the implementation we found better results above that number, so in order to save computational time, we limit the number of components to try. The same argument applies to the decision of trying $k$ up to 10.
 
 ```{r PCA-KNN-OTHERS, include=FALSE, cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
@@ -808,10 +812,10 @@ best_params_pca$final_avg_n_pcs
 ```
 
 
-## Compare PCA vs Original Image Representation (Find Best Parameters Original Image Representation)
+## 6. Compare PCA vs Original Image Representation (Find Best Parameters Original Image Representation)
 
 
-### Threshold selection
+### 6.1. Threshold selection
 
 Same procedure as in PCA-KNN is implemented.
 
@@ -842,7 +846,7 @@ best_thresholds_no_pca_results$best_thresholds
 ```
 
 
-### Metric, k, n_pcs selection
+### 6.2. Metric, k, n_pcs selection
 
 ```{r NO-PCA OTHERS, include=FALSE, cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
@@ -873,9 +877,9 @@ best_params_no_pca
 ```
 
 
-## PCA-FDA-KNN
+## 7. PCA-FDA-KNN
 
-### Threshold selection
+### 7.1. Threshold selection
 
 The same procedure as in PCA-KNN is implemented. In this case, we also fix `fda_dims` to save computational time. The chosen fixed value is 24 because in this case we have 25 classes, so setting a higher value will just add up noise. 
 
@@ -896,6 +900,7 @@ best_thresholds_fda_results <- get_best_params(best_threshold=TRUE, M,image_ids=
 saveRDS(best_thresholds_fda_results, "best_thresholds_fda_results.rds")
 }
 ```
+
 ```{r}
 best_thresholds_fda_results <- readRDS("best_thresholds_fda_results.rds")
 
@@ -905,9 +910,9 @@ best_thresholds_fda_results$best_thresholds
 ```
 
 
-### Metric, k, n_pcs selection
+### 7.2. Metric, k, n_pcs selection
 
-In this next grid search the values of the `fda_dims` start in 10 instead of starting with a lower value to save some computational time. Also, `n_pcs` is capped to 24 (instead of 30) to reduce computational time, but if it is desired, the grid can be widen to obtain an even more precise result. Actually, the best option obviously will be to compute all the combinations in only one grid, but the need to separte it in two is also obvious, because it's too computationally expensive. 
+In this next grid search the values of the `fda_dims` start in 10 instead of starting with a lower value to save some computational time. Also, `n_pcs` is capped to 24 (instead of 30) to reduce computational time, but if it is desired, the grid can be widen to obtain an even more precise result. Actually, the best option obviously will be to compute all the combinations in only one grid, but the need to separate it in two is also obvious, because it's too computationally expensive. 
 
 ```{r PCA-FDA-OTHERS, cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
@@ -931,7 +936,7 @@ if(COMPUTE_GRID_SEARCH){
     saveRDS(best_params_fda, "best_params_fda.rds")
   } 
 }
-beep(3)
+
 ```
 
 ```{r, cache=TRUE}
@@ -944,11 +949,11 @@ best_params_fda$final_avg_n_pcs
 best_params_fda$final_avg_fda_dims
 ```
 
-# Conclusions
+# 8. Conclusions
 
 The results show that applying PCA before KNN improves balanced accuracy (0.981 vs. 0.943) while significantly reducing computation time. Even if we expected a larger performance gap, the similarity in results suggests that KNN can still work well in high-dimensional spaces when properly tuned. Notice that the difference in balanced accuracy is not that big, but we can appreciate a bigger difference if we take a look to the known accuracy, suggesting that the model that is not using PCA, is finding more problems in correctly classifying the known faces. The PCA approach retains enough variance to achieve strong recognition while making training and inference more efficient. 
 
 We should choose the PCA-based KNN model because it achieves better accuracy while drastically reducing computation time and memory usage. It is more scalable, less prone to overfitting, and provides a more efficient representation of facial features without sacrificing recognition performance.
 
-The grid search results under the FDA approach indicate that the optimal configuration to use is k = 1, 20 principal components, and 11 FDA dimensions. Specifically, the summary data reveals an average known accuracy of 0.995, an average unknown accuracy of 1, and an average balanced accuracy of 0.998. This demonstrates that applying FDA on top of PCA further refines our model’s ability to distinguish between classes, leading to near-perfect recognition performance. Overall, these findings confirm that the PCA-based KNN model, especially when enhanced with FDA, improves recognition accuracy—particularly for known faces.
+The grid search results under the FDA approach indicate that the optimal configuration to use is $k$ = 1, 20 principal components, and 11 FDA dimensions. Specifically, the summary data reveals an average known accuracy of 0.995, an average unknown accuracy of 1, and an average balanced accuracy of 0.998. This demonstrates that applying FDA on top of PCA further refines our model’s ability to distinguish between classes, leading to near-perfect recognition performance. Overall, these findings confirm that the PCA-based KNN model, especially when enhanced with FDA, improves recognition accuracy—particularly for known faces.
 
