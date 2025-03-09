@@ -1,0 +1,907 @@
+---
+title: "Assigment"
+output: html_document
+date: "2025-02-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(archive)
+library(dplyr)
+library(plotly)
+
+COMPUTE_GRID_SEARCH <- TRUE
+```
+
+
+# Input data
+
+The code begins by handling the extraction of image data stored in a compressed archive. It specifies the file name "Training.rar" and attempts to extract its contents using the function `archive_extract()` from the archive package. This extraction is wrapped in a `try()` block with the `silent = TRUE` parameter, ensuring that any errors during extraction (for example, if the archive has already been extracted) do not interrupt the flow of execution.
+
+
+```{r}
+# Specify the file path
+rar_file <- "Training.rar"
+
+# Extract the contents
+#unpacked_files <- archive::archive_extract(rar_file)
+try(archive_extract("Training.rar"), silent = TRUE)
+```
+
+Following extraction, two helper functions are defined to manage and organize the image files. The first function, `extract_id`, takes a filename, extracts the first sequence of digits using regular expressions, and converts the result to a numeric value. This numeric identifier is intended to represent a unique ID associated with each image, likely corresponding to a subject’s identifier. The second function, `get_sorted_filenames`, leverages `list.files()` to obtain all JPEG files in the "Training" folder. It then applies `extract_id` to each filename, orders the files based on these numeric identifiers, and returns a sorted list of image file paths. This sorting ensures that the images are processed in a consistent order, which is crucial for reliable downstream analysis.
+
+```{r}
+extract_id <- function(filename) {
+    matches <- regmatches(basename(filename), regexpr("[0-9]+", basename(filename)))
+    return(as.numeric(matches))  # Convert to numeric
+}
+
+get_sorted_filenames <- function(){
+  # Get all .jpg files
+  image_files <- list.files("Training", pattern = "\\.jpg$", full.names = TRUE)
+  
+  sorted_indices <- order(sapply(image_files, extract_id))
+  image_files <- image_files[sorted_indices]
+  return(image_files)
+}
+
+```
+
+
+Once the filenames are sorted, the code proceeds to load and process the images. The sorted list of image file paths is stored in `image_files`, and the numeric IDs are extracted again for potential labeling or further processing. The script then iterates over each file, loading the image using `OpenImageR::readImage()`. Since the images are in color, the code handles each of the three channels (red, green, and blue) separately. For each channel, the two-dimensional array representing the pixel intensities is flattened into a one-dimensional vector using `as.vector()`. These three vectors are then concatenated into a single vector, effectively transforming each image into a long vector that contains all the pixel values sequentially.
+
+Then each channel is flattened into vectors $r, g, b \in \mathbb{R}^{HW}$ and concatenated as:
+
+$$
+\mathbf{x} = \begin{bmatrix} r \\ g \\ b \end{bmatrix} \in \mathbb{R}^{3HW}.
+$$
+
+Each of these vectors is stored in a list, with the file name as the key.
+
+```{r}
+# Get all .jpg files in the Training folder
+image_files <- get_sorted_filenames()
+#Remove the files
+#image_files <- image_files[!image_files %in% c("Training/1AT.jpg", "Training/3BT.jpg")]
+
+image_ids <- sapply(image_files, extract_id)
+
+image_rows  <- list()
+for (file in image_files) {
+  img <- OpenImageR::readImage(file)  # Load image
+  
+  # Flatten RGB channels and concatenate into a single row
+  red <- as.vector(img[,,1])  # Flatten red channel
+  green <- as.vector(img[,,2]) # Flatten green channel
+  blue <- as.vector(img[,,3])  # Flatten blue channel
+  
+  # Combine R, G, B into one row and store it
+  image_rows[[file]] <- c(red, green, blue)
+}
+
+# Convert the list of rows into a matrix
+M <- do.call(rbind, image_rows)
+
+# Check dimensions (rows = number of images, columns = total pixels * 3)
+dim(M)
+```
+
+After processing all images, the list of vectors is converted into a matrix $M$ using the `do.call(rbind, image_rows)` function. In this matrix, each row corresponds to one image, and each column represents a pixel value from one of the channels, so that if there are $n$ images and each image has $d = 3 \times H \times W$ features, $M$ becomes an $n \times d$ matrix. The final command, `dim(M)`, is used to display the dimensions of $M$ and verify that the data has been structured correctly. This pre-processing is fundamental as it sets up the data in the appropriate high-dimensional format.
+
+
+# Part A
+
+The function `compute_pca` begins by calculating the mean vector of the input data matrix, where each column corresponds to a feature (in this case, pixel values). The mean is computed using the `colMeans` function and stored in the variable `mean_m`. Immediately after, the function centers the data by subtracting this mean from every observation. This centering is achieved using the `sweep` function, which subtracts the mean from each column of the data matrix, ensuring that the new data matrix has a zero mean along every dimension.
+
+Once the data is centered, the function computes a covariance-like matrix, but instead of calculating the full $d \times d$ covariance matrix (with $d$ being the number of pixels), it computes a smaller $n \times n$ matrix, where $n$ is the number of observations. This is done by multiplying the centered matrix by its transpose and scaling by $\frac{1}{n-1}$, yielding
+$$
+C = \frac{1}{n-1} X_c X_c^\top,
+$$
+where $X_c$ represents the centered data matrix. This smaller covariance matrix is computationally more efficient to work with when the dimensionality is very high.
+
+Next, an eigen-decomposition is performed on this smaller covariance matrix using the `eigen` function, which returns a set of eigenvalues and eigenvectors. Since these eigenvectors are computed in the space of the $n \times n$ matrix, they do not directly represent the directions in the original high-dimensional pixel space. To map them back, the function multiplies the transpose of the centered data by these eigenvectors. This operation effectively transfers the principal component directions to the original space. After this, each column (which represents an eigenvector in pixel space) is normalized by dividing it by its Euclidean norm, ensuring that every principal component has unit length.
+
+Finally, the function computes the proportion of variance explained by each principal component. Independently of the the covariance matrix computed, the large or the small, the eigenvalues will be the same. This is done by dividing each eigenvalue by the sum of all eigenvalues, resulting in a normalized vector of explained variances. The function then returns a list containing the mean vector (`mean_obs`), the matrix of normalized eigenvectors (`P`), the vector of explained variance proportions (`D`), and the raw eigenvalues (`E`). After running `pca_results <- compute_pca(M)`, these variables store the respective results, setting the stage for subsequent analysis. 
+
+```{r}
+compute_pca <- function(data) {
+  # Compute mean
+  mean_m <- colMeans(data)
+  
+  # Subtract the mean from each row
+  centered_matrix <- sweep(data, 2, mean_m, FUN = "-")
+
+  n <- nrow(centered_matrix)
+  var_cov_small <- (1 / (n - 1)) * (centered_matrix %*% t(centered_matrix))
+  eigen_dec <- eigen(var_cov_small)
+  
+  P <- t(centered_matrix) %*% eigen_dec$vectors
+  P <- apply(P, 2, function(p) p / sqrt(sum(p^2)))
+  
+  
+  D <- eigen_dec$values / sum(eigen_dec$values)
+
+  return(list(mean_obs = mean_m, P = P, D = D, E = eigen_dec$values))
+}
+
+pca_results <- compute_pca(M)
+
+mean_obs <- pca_results$mean_obs
+P <- pca_results$P #eigenvectors in pixel space normalized #image space
+D <- pca_results$D #variance explained by eigenvalue
+E <- pca_results$E #eigenvalues
+#V <- pca_results$V #eigenvectors in pixel space normalized
+
+pca_results <- compute_pca(M)
+
+mean_obs <- pca_results$mean_obs
+P <- pca_results$P #eigenvectors in pixel space normalized #image space
+D <- pca_results$D #variance explained by eigenvalue
+E <- pca_results$E #eigenvalues
+#V <- pca_results$V #eigenvectors in pixel space normalized
+```
+
+
+
+The projection of the images in the pca space will be the following:
+
+```{r}
+Y <- sweep(M, 2, mean_obs, FUN = "-") %*% P
+```
+
+We can visualize the `pc` component of the `image_index` image as follows.
+For example we can see the first image in the dataset projection to the first principal component.
+
+```{r}
+visualize_pc <- function(image_index, pc, mean_obs, P, Y, img_height = 200, img_width = 180) {
+  # Extract the first principal component
+  p1 <- P[,pc]  # First principal component (size p)
+  
+  # Get the projection of the specific image onto PC1
+  y1 <- Y[image_index, 1]  # First coordinate in PCA space
+  
+  # Reconstruct only PC1 contribution
+  x_pc1 <- y1 * p1 + mean_obs
+  
+  # Reshape into image dimensions
+  image_matrix <- array(x_pc1, dim = c(img_height, img_width, 3))
+  
+  # Plot the PC1 contribution as an image
+  return(image_matrix)
+  
+}
+
+# Example: Visualizing the PC1 contribution for image x
+image_matrix <- visualize_pc(1,1, mean_obs, P, Y)
+OpenImageR::imageShow(image_matrix)
+```
+
+```{r, include=FALSE}
+#OpenImageR::writeImage(image_matrix, "output_image.png")
+#utils::browseURL("output_image.png")
+```
+
+
+Also, we can visualize the all the images in the first 3 principal components. We can see how images of the same person are grouped together, proving that the PCA is working properly.
+```{r}
+plot_pca_3d_interactive <- function(Y, image_ids) {
+  df <- data.frame(PC1 = Y[,1], PC2 = Y[,2], PC3 = Y[,3], ID = factor(image_ids))
+
+  plot_ly(df, x = ~PC1, y = ~PC2, z = ~PC3, color = ~ID, text = ~paste("ID:", ID),
+          type = "scatter3d", mode = "markers") %>%
+    layout(title = "PCA Projection (PC1 vs PC2 vs PC3)")
+}
+
+plot_pca_3d_interactive(Y, image_ids)
+```
+
+# KNN
+
+The face recognition will be performed using a KNN algorithm. Given a new image of a person, the system should recognize whose person it is in case we have it in the dataset, or classify it as an unknown person if it doesn't. The algorithm follows these steps:
+
+1. Take the vector of the image to classify and compute the distance to all the other images of the dataset.
+2. Sort the distances by ascending order.
+3. Take the k closest samples and the person id corresponding to it.
+4. The predicted person id is the majority id among the k closest neighbors.
+5. Take the distance of the closest neighbor, and if is larger than a threshold, the person on the image is considered as an unknown person.
+
+
+As knn requires to compute distances between vectors, we will try three of them. The ones to try are obtained from the paper titled `"Distance measures for PCA-based face recognition"`. We implemented three of the ones that obtained better results (`"simplified_mahalanobis"`, `"weighted_angle"`, `"modified_sse"`).
+
+The next function, `compute_distance`, is designed to calculate the distance between two vectors, $x$ and $y$, using one of three different metrics. The metric is selected by the parameter `metric`, and the function also takes in a vector of eigenvalues $E$, which are used in the weighting schemes.
+
+For `"simplified_mahalanobis"`, a constant $\alpha = 0.25$ is defined. The function computes a weighting vector $z$ as
+
+$$
+z = \sqrt{\max\left(0, \frac{E}{E + \alpha^2}\right)},
+$$
+
+and then returns the negative sum of the element-wise product of $z$, $x$, and $y$. The negative sum indicates that, for classification purposes, lower values correspond to closer matches.
+
+If the metric `"weighted_angle"` is chosen, the function computes a different weighting vector by taking
+
+$$
+z = \sqrt{\max\left(0, \frac{1}{E}\right)},
+$$
+
+and returns the negative weighted inner product of $x$ and $y$, normalized by the product of their Euclidean norms. This is expressed as
+
+$$
+\text{distance} = -\frac{\sum_i z_i \, x_i \, y_i}{\sqrt{\sum_i x_i^2} \sqrt{\sum_i y_i^2}},
+$$
+
+which resembles a cosine similarity measure with weights, again with the negative sign ensuring that a higher similarity results in a lower distance value.
+
+Lastly, for the `"modified_sse"` metric, the function computes a normalized squared error by taking the sum of the squared differences between the corresponding elements of $x$ and $y$, divided by the product of the sums of squares of $x$ and $y$, given by
+
+$$
+\text{distance} = \frac{\sum_i (x_i - y_i)^2}{\left(\sum_i x_i^2\right)\left(\sum_i y_i^2\right)}.
+$$
+
+```{r}
+# Computes the distance between 2 vectors. D is the eigenvalue list, required for some metrics. 
+compute_distance <- function(x, y, E, metric) {
+    
+    if (metric == "simplified_mahalanobis") {
+      alpha <- 0.25
+      z <- sqrt(pmax(0, E / (E + alpha^2)))
+      return(-sum(z * x * y))
+      
+    } else if (metric == "weighted_angle") {
+      z <- sqrt(pmax(0, 1 / E))
+      return(-sum(z * x * y) / sqrt(sum(x^2) * sum(y^2)))
+      
+    } else if (metric == "modified_sse") {
+      return(sum((x - y)^2) / (sum(x^2) * sum(y^2)))
+      
+    } else {
+      stop("Invalid metric. Choose from 'simplified_mahalanobis', 'weighted_angle', or 'modified_sse'.")
+    }
+}
+```
+
+
+### FDA
+```{r}
+fda <- function(Y) {
+  # Y is an n x p matrix obtained from a PCA where the last column has to contain the class.
+  
+  # We extract the class column and convert it to a factor
+  class_vector <- Y[, ncol(Y)]
+  class_vector <- as.factor(class_vector)
+  
+  # We extract the feature matrix (all columns except the last one)
+  X <- Y[, -ncol(Y), drop = FALSE]
+  
+  # We compute the overall mean of the features
+  m <- colMeans(X)
+  
+  # Determine the number of classes and the unique classes
+  people <- unique(class_vector)
+  
+  # We obtain the number of features (dimensions) to select the size of S_W and S_B
+  p <- ncol(X)
+  
+  # We initialize the within-class scatter matrix (S_W) and the between-class scatter matrix (S_B)
+  S_W <- matrix(0, nrow = p, ncol = p)
+  S_B <- matrix(0, nrow = p, ncol = p)
+  
+  # For each class, we compute the class mean and we accumulate contributions to S_B and S_W
+  for (cl in people) {
+    
+    # Submatrix of observations for the current class 'cl'
+    X_class <- X[class_vector == cl, , drop = FALSE]
+    n_i <- nrow(X_class)
+    
+    # We compute the mean of the current class
+    mean_class <- colMeans(X_class)
+    
+    # We update S_B for each class
+    # We perform the outer product of (mean_class - m), weighted by n_i
+    S_B <- S_B + n_i * ((mean_class - m) %*% t((mean_class - m)))
+    
+    # To Update S_W we need to access every observation j of the class one by one
+    # We create a for loop which goes through each observation to perform the
+    # sum of (x_j - mean_class)(x_j - mean_class)^T
+    for (j in 1:n_i) {
+      diff_j <- as.matrix(X_class[j, ] - mean_class)
+      S_W <- S_W + diff_j %*% t(diff_j)
+    }
+  }
+  
+  # We compute the eigenvalues and eigenvectors for the matrix solve(S_W) %*% S_B
+  eig_values <- eigen(solve(S_W) %*% S_B)
+  
+  # We obtain the sorted indices of the eigenvalues in decreasing order
+  sort_eig <- order(eig_values$values, decreasing = TRUE)
+  
+  # We sort the eigenvectors and eigenvalues according these indices
+  eigenvectors <- Re(eig_values$vectors[, sort_eig])
+  eigenvalues <- Re(eig_values$values[sort_eig])  # Ensure real values
+  D <- eig_values$values / sum(eig_values$values)
+  
+  return(list(mean_fda = m, P_fda = eigenvectors, D_fda = D, E_fda = eigenvalues))
+}
+```
+
+The function `knn_classifier` implements a k-nearest neighbors (k-NN) classifier. It takes several parameters: the number of neighbors $k$, a similarity threshold, the new image's vector $y_{\text{new}}$, a matrix $Y$ containing the representations of the training images (one per row), the corresponding image IDs, a string `metric` indicating which distance metric to use, and a vector $E$ of eigenvalues required by some metrics.
+
+The function first computes the distances between the new image $y_{\text{new}}$ and every row of $Y$. This is achieved by applying the `compute_distance` function to each row, which calculates the similarity according to the selected metric. The resulting distances are stored in a vector, and a data frame is created with two columns: one for the image IDs and another for the computed distances.
+
+After obtaining the distance values, the data frame is sorted in ascending order by distance. The assumption here is that a the closer two images are in the space, the greater similarity. The function then selects the $k$ nearest neighbors (i.e., the $k$ rows with the smallest distances). Instead of computing an average distance—which might be misleading if the metric produces both positive and negative values—the function considers the minimum distance among these $k$ neighbors as the decisive measure. This minimum distance is compared against a pre-set threshold: if the smallest distance is greater than the threshold, the function returns $0$, signifying that the new image is too dissimilar from any training image to be confidently recognized. This relies on the assumption that if the closest image is already too far to consider the new image as part of the dataset, the rest of the images too.
+
+If the minimum distance is within the acceptable threshold, the function then examines the class IDs of the $k$ nearest neighbors. It counts the occurrences of each ID and returns the majority class (i.e., the ID that appears most frequently). This classification decision is based on the intuition that if the new image is similar to several images from a particular class, it likely belongs to that same class.
+
+In summary, the decision rule can be viewed as: if 
+$$
+\min \{d(y_{\text{new}}, y_i) : y_i \in \text{k nearest neighbors}\} > \text{threshold},
+$$ 
+then return $0$, otherwise classify $y_{\text{new}}$ according to the majority label among its $k$ nearest neighbors.
+
+
+```{r}
+
+knn_classifier <- function(k, threshold, y_new, Y, image_ids, metric, E){
+  distances <- apply(Y, 1, function(y) compute_distance(y, y_new, E, metric) )
+  dist_df <- data.frame(ID = image_ids, Distance = distances)
+
+  # Sort the distance in ascending order
+  dist_df <- dist_df[order(dist_df$Distance), ]
+
+  # Take the first k distances
+  k_nearest <- head(dist_df, k)
+
+  # Average distance. If distance is larger than threshold return 0. Else continue
+  #distance <- mean(k_nearest$Distance) # Doesn't make sense in similarity metrics that can have negative values or ranges that go   from negatives to positive. Averaging positive and negative values might cancel out the real distance.
+  
+  # Min distance: If the closest/most similar, is too far, the rest will be farther.
+  distance <- min(k_nearest$Distance)
+
+  if (distance > threshold) {
+    return(0)
+  }
+  
+  # value count of the ids. Return the majority class.
+  id_counts <- table(k_nearest$ID)
+  majority_id <- as.numeric(names(which.max(id_counts)))
+  return(majority_id)
+}
+```
+
+
+# Parameter selection
+
+We will perform a two steps grid search trying to maximize the balanced accuracy. We could do it in one step, and the results will be probably better, but this approach will highly reduce the computation time.
+
+The procedure is the following:
+
+  1. Keep all the parameters fixed but the threshold and iterate a range of thresholds. Each metric will have a different range of thresholds. This will be done in `n` random train/test splits. In the test split there are always images of people not present in the train split.
+  
+  2. Once found the threshold for each metric that maximizes the balanced accuracy among all the splits, perform a grid search among the other parameters keeping the best threshold found fixed. This will be done in `n` random train/test splits. The best parameters will be those that in average are best.
+  
+The justification of this methodology relies on the randomness of the splits. A potential issue with optimizing a threshold on a single split is that it may overfit to the specific individuals present in that split, leading to poor generalization when applied to new data. By evaluating multiple train/test splits where the test set always contains individuals not seen in training, we mitigate this risk by averaging performance across diverse scenarios. This approach helps smooth out variability and ensures that the chosen threshold is not overly sensitive to a particular split but instead represents a robust choice across different partitions of the dataset. We apply the same methodology to the other parameters, reinforcing the generalizability of the final model selection. 
+
+Now we will describe the functions used for that.
+
+The function `create_random_splits_by_image` is designed to generate multiple random training and test splits based on image identifiers, while ensuring that a specified number of unique subjects (or classes) are completely excluded from the training set in each split. The input parameter `image_ids` represents the class labels associated with each image, and parameters such as `percent_test`, `num_splits`, and `num_people_to_exclude` allows us to control the proportion of test data, the number of splits, and the number of subjects to exclude from training and include their images in testing, respectively.
+
+At the beginning of the function, a fixed random seed is set using `set.seed(1)` to guarantee reproducibility of the random splits. The function then extracts the unique person id labels from `image_ids` and proceeds to create the splits using `lapply`. Before splitting the data, `num_people_to_exclude` will be randomly selected (their ids), and all the images belonging to this group will be excluded from the splitting process. Then, the splits are created from the set of remaining images, and the ones excluded initially are included in the test set. In mathematical terms, if $T$ represents the set of test indices and $E$ represents the excluded indices, then the final test set is $T \cup E$, and the training set is defined as the complement of $T \cup E$ within the full set of image indices.
+
+The function also provides diagnostic output by printing the excluded subjects along with the sizes of the test and training splits. It then checks for any classes that appear in the test set but not in the training set by comparing the unique class labels present in each set. If such cases are found, it prints a message indicating which subjects are missing from the training set and returns their indices as part of the split information.
+
+In the end, the function returns a list of splits, where each split is a list containing the training indices, test indices, and any indices corresponding to missing people (people in the test set that are not present in the train set. This is used just for diagnostic). This approach is particularly useful to ensure that some subjects are completely unseen during training and can help evaluating the generalization and robustness of the classifier.
+
+```{r}
+create_random_splits_by_image <- function(image_ids, percent_test = 0.3, num_splits = 5, num_people_to_exclude = 1) {
+  set.seed(1)
+  unique_people <- unique(image_ids)  # Get unique class labels
+  
+  splits <- lapply(1:num_splits, function(i) {
+    
+    # Randomly select people to exclude from train
+    excluded_people <- sample(unique_people, num_people_to_exclude)
+    
+    # Get indices of images belonging to excluded people
+    excluded_indices <- which(image_ids %in% excluded_people)
+    
+    # Sample test images from the remaining people
+    remaining_images <- setdiff(names(image_ids), names(image_ids)[excluded_indices])  # Remove excluded images
+    test_images <- sample(remaining_images, round(length(remaining_images) * percent_test))
+    
+    # Get test and train indices
+    test_indices <- which(names(image_ids) %in% test_images)  # Normal test split
+    test_indices <- unique(c(test_indices, excluded_indices))  # Force excluded images into the test set
+    train_indices <- setdiff(seq_along(image_ids), test_indices)  # Remaining are train
+    
+    cat("\nExcluded people: ", paste(excluded_people, collapse = ", "), "\n")
+    cat("length test: ", length(test_indices), "\nlength train: ", length(train_indices), "\n")
+    
+    # Extract class labels for train and test sets
+    train_people <- unique(image_ids[train_indices])
+    test_people <- unique(image_ids[test_indices])
+    
+    # Check if any class is in test but not in train
+    missing_people <- setdiff(test_people, train_people)
+    missing_people_indices <- which(image_ids %in% missing_people)
+    
+    if (length(missing_people) > 0) {
+      cat("The following people are in the test set but not in the train set: ", paste(missing_people, collapse = ", "), '\n')
+    }
+    
+    return(list(train = train_indices, test = test_indices, missing_people = missing_people_indices))
+  })
+  
+  return(splits)
+}
+```
+
+The following functions will be used to find the best parameters (explained later). 
+
+`run_knn_classification` is a helper function used to implement the grid search part that is common for the KNN face recognizer that uses PCA projections from the one that it doesn't. It iterates over a grid of parameters (metric, k, threshold). It computes the known and unknown accuracies. The accuracy of people from the test set that belong to the train set, and the accuracy of people from the test set that are not present in the train set respectively. Then computes the balanced accuracy, that is the mean of the previous ones. 
+
+```{r}
+run_knn_classification <- function(Y_train, Y_test, image_ids_train, image_ids_test, 
+                                   metrics, param_grid, fold, n_pc, E_pc,  FDA_dims = NA, results) {
+  for (metric in metrics) {
+    if (!(metric %in% names(param_grid))) {
+      stop(paste("Unknown metric:", metric))
+    }
+    
+    for (k in param_grid$k_values) {
+      for (threshold in param_grid[[metric]]) {
+        cat("Testing Metric:", metric, "| k:", k, "| n_pc:", n_pc, "| fda_dims:", FDA_dims, "| threshold:", threshold, "\n")
+        
+        predictions <- sapply(1:nrow(Y_test), function(i) {
+          knn_classifier(k = k, threshold = threshold, y_new = Y_test[i, ], 
+                         Y = Y_train, image_ids = image_ids_train, metric = metric, E = E_pc)
+        })
+        
+        known_mask <- image_ids_test %in% image_ids_train  
+        unknown_mask <- !image_ids_test %in% image_ids_train  
+        
+        known_accuracy <- ifelse(sum(known_mask) > 0, mean(predictions[known_mask] == image_ids_test[known_mask]), NA)
+        unknown_accuracy <- ifelse(sum(unknown_mask) > 0, mean(predictions[unknown_mask] == 0), NA)
+        balanced_accuracy <- mean(c(known_accuracy, unknown_accuracy), na.rm = TRUE)
+        
+        
+        results <- rbind(results, data.frame(Fold = fold, n_pcs = n_pc, 
+                                             Metric = metric, k = k, Threshold = threshold, 
+                                             Known_Accuracy = known_accuracy, Unknown_Accuracy = unknown_accuracy,
+                                             Balanced_Accuracy = balanced_accuracy, FDA_dims = FDA_dims))
+      }
+    }
+  }
+  return(results)
+}
+```
+
+
+`find_best_params` is another function related with the grid search. It separates the part of the search that is not common between the classifier that uses PCA and the one that it doesn't. This function receives a boolean parameter called `compute_pca`. If TRUE, will compute the PCA using `compute_pca` using only the training images, then will project all the images on the PCA space. Then will iterate over the number of principal components to use for the projected images and then will call `run_knn_classification` for each one of them to continue with the grid search and obtain the results obtained. If FALSE, will force the metric to be `modified_sse`, as the other ones use the eigenvalues. Then will call `run_knn_classification` to continue with the grid search.
+
+```{r}
+find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5, 
+                             num_people_to_exclude = 1, compute_pca = TRUE, apply_fda = FALSE) {
+  # Create random splits based on image IDs
+  folds <- create_random_splits_by_image(image_ids, num_splits = num_folds, 
+                                         num_people_to_exclude = num_people_to_exclude)
+  results <- list()
+  
+  for (fold in seq_along(folds)) {
+    test_indices <- folds[[fold]]$test
+    train_indices <- folds[[fold]]$train
+    
+    cat("Fold:", fold, "\n")
+    
+    if (compute_pca || apply_fda) {
+      cat("Computing PCA...\n")
+      pca_results <- compute_pca(M[train_indices, ])
+      mean_obs <- pca_results$mean_obs
+      P <- pca_results$P
+      E <- pca_results$E
+      cat("PCA computed. Projecting data...\n")
+      # Project data using PCA (all available PCA components)
+      Y <- sweep(M, 2, mean_obs, FUN = "-") %*% P
+    } else {
+      cat("Skipping PCA. Using original data...\n")
+      Y <- M  # Use original data
+    }
+    
+    cat("dim(Y):", dim(Y), "\n")
+    
+    # If PCA is not computed, restrict metrics to 'modified_sse'
+    if (!compute_pca || apply_fda == TRUE) metrics <- c("modified_sse")
+    
+    
+    
+    # Process classification using the appropriate representation
+    if (compute_pca || apply_fda) {
+      for (n_pc in param_grid$n_pcs) {
+        # Use the first n_pc PCA components
+        Y_pc <- Y[, 1:n_pc, drop = FALSE]
+        
+        if (apply_fda) {
+          cat("Applying FDA on PCA matrix with", n_pc, "components...\n")
+          # Append class labels to Y_pc and compute FDA on these n_pc components
+          Y_pc_with_class <- cbind(Y_pc, class = image_ids)
+          fda_results <- fda(Y_pc_with_class)
+          
+          # Project Y_pc into FDA space
+          FDA_proj <- Y_pc %*% fda_results$P_fda
+          
+          # Loop over the FDA dimensions specified in the grid
+          for (n_fda in param_grid$fda_dims) {
+            # Skip FDA dimension if it exceeds the number of PCA components used
+            if (n_fda > n_pc) next
+            
+            FDA_dims <- n_fda  # Use the loop variable directly.
+            Y_used <- FDA_proj[, 1:FDA_dims, drop = FALSE]
+            E_used <- fda_results$E_fda[1:FDA_dims, drop = FALSE]
+            
+            cat("Using", n_pc, "PCA components and", FDA_dims, "FDA components.\n")
+            
+            Y_train <- Y_used[train_indices, , drop = FALSE]
+            Y_test <- Y_used[test_indices, , drop = FALSE]
+            image_ids_train <- image_ids[train_indices]
+            image_ids_test <- image_ids[test_indices]
+            
+            results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
+                                              metrics, param_grid, fold, n_pc, E_used, FDA_dims, results)
+          }
+        } else {
+          # If only PCA is computed, use the PCA subspace directly
+          Y_used <- Y_pc
+          E_used <- E[1:n_pc, drop = FALSE]
+          n_used <- n_pc
+          
+          Y_train <- Y_used[train_indices, , drop = FALSE]
+          Y_test <- Y_used[test_indices, , drop = FALSE]
+          image_ids_train <- image_ids[train_indices]
+          image_ids_test <- image_ids[test_indices]
+          
+          results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
+                                            metrics, param_grid, fold, n_pc, E_used, FDA_dims = NA, results)
+          
+        }
+      }
+    } else {
+      # If no PCA is computed, use the original data directly.
+      Y_train <- Y[train_indices, , drop = FALSE]
+      Y_test <- Y[test_indices, , drop = FALSE]
+      image_ids_train <- image_ids[train_indices]
+      image_ids_test <- image_ids[test_indices]
+      
+      results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
+                                        metrics, param_grid, fold, n_pc = NA, E_pc = NULL, results)
+    }
+  }
+  
+  return(results)
+}
+
+```
+
+`get_best_params` is used to handle the case where we are looking for the best threshold for each distance metric and the case where we are looking for the rest of the parameters. The parameters are:
+
+* `best_threshold`: Boolean indicating if we are looking for the best threshold or not.
+* `M`: Matrix with the raw RGB image representation. One image by row.
+* `image_ids`: ids of the images in the dataset.
+* `param_grid`: Grid of parameters to try.
+* `num_folds`: Number of train/test splits to generate.
+* `num_people_to_exclude`: Number of people whose images will be excluded from the test set and included in the test.
+* `compute_pca`: Boolean indicating whether we compute the PCA and project the images, or we just use the raw image representation.
+
+If `best_threshold` is TRUE, the function will return a dataframe containing the best threshold per fold and metric. A dataframe containing the average best threshold by metric. And the best threshold per metric in an easier to access data structure.
+If `best_threshold` is FALSE, the function will return a dataframe containing the best k and n_pc by fold. A dataframe containing the best average k and average n_pc and average accuracy scores by metric. The best metric (the one that was the best in more folds). The average k for the best metric. And the best n_pcs for the best metric.
+
+```{r}
+
+get_best_params <- function(best_threshold = TRUE, M, image_ids, metrics, param_grid, 
+                            num_folds = 5, num_people_to_exclude = 1, 
+                            compute_pca = TRUE, apply_fda = FALSE) {
+  
+  # Compute the parameters using either PCA only or PCA followed by FDA (if apply_fda is TRUE)
+  results <- find_best_params(M = M, image_ids = image_ids, metrics = metrics, 
+                              param_grid = param_grid, num_folds = num_folds, 
+                              num_people_to_exclude = num_people_to_exclude, 
+                              compute_pca = compute_pca, apply_fda = apply_fda)
+  
+  if (best_threshold) {
+    # Step 1: Get the best threshold per fold and metric
+    best_thresholds_per_fold <- results %>%
+      group_by(Fold, Metric) %>%
+      slice_max(Balanced_Accuracy, n = 1, with_ties = FALSE) %>%  # Select best threshold per fold and metric
+      select(Fold, Metric, Threshold, Balanced_Accuracy) %>%
+      ungroup()
+    
+    # Step 2: Compute the average threshold per metric
+    average_best_thresholds <- best_thresholds_per_fold %>%
+      group_by(Metric) %>%
+      summarise(Average_Threshold = mean(Threshold, na.rm = TRUE)) %>%
+      ungroup()
+    
+    # Convert to a named vector for easy access
+    best_thresholds_vector <- average_best_thresholds %>%
+      pull(Average_Threshold, name = Metric)
+    
+    return(list(best_thresholds_per_fold = best_thresholds_per_fold,
+                average_best_thresholds = average_best_thresholds, 
+                best_thresholds = best_thresholds_vector))
+  } else {
+    # Step 1: Get the best row per fold based on Balanced Accuracy
+    best_per_fold <- results %>%
+      group_by(Fold) %>%
+      slice_max(Balanced_Accuracy, with_ties = FALSE) %>%  # Select row with highest Balanced Accuracy per fold
+      ungroup()
+    
+    print(best_per_fold)
+    
+    # Step 2: Compute the average k, n_pcs, and (if applicable) FDA_dims by Metric
+    average_k_npcs_by_metric <- best_per_fold %>%
+      group_by(Metric) %>%
+      summarise(
+        Occurrences = n(),
+        Average_k = round(mean(k, na.rm = TRUE)),
+        Average_n_pcs = round(mean(n_pcs, na.rm = TRUE)),
+        Average_Known_Accuracy = mean(Known_Accuracy, na.rm = TRUE),
+        Average_Unknown_Accuracy = mean(Unknown_Accuracy, na.rm = TRUE),
+        Average_Balanced_Accuracy = mean(Balanced_Accuracy, na.rm = TRUE),
+        Average_fda_dims = if (apply_fda) round(mean(FDA_dims, na.rm = TRUE)) else NA
+      ) %>%
+      ungroup()
+    
+    print(average_k_npcs_by_metric)
+    
+    # Step 3: Find the best metric (here we choose the metric with the highest occurrence count)
+    best_metric <- average_k_npcs_by_metric %>%
+      slice_max(Occurrences, with_ties = FALSE) %>%
+      pull(Metric)
+    
+    # Step 4: Compute the average k and n_pcs ONLY for the best metric
+    final_avg_k <- average_k_npcs_by_metric %>%
+      filter(Metric == best_metric) %>%
+      pull(Average_k) %>%
+      as.integer()
+    cat("final_avg_k: ", final_avg_k, "\n")
+    
+    final_avg_n_pcs <- average_k_npcs_by_metric %>%
+      filter(Metric == best_metric) %>%
+      pull(Average_n_pcs) %>%
+      as.integer()
+    cat("final_avg_n_pcs: ", final_avg_n_pcs, "\n")
+    
+    final_avg_fda_dims <- if (apply_fda) {
+      average_k_npcs_by_metric %>%
+        filter(Metric == best_metric) %>%
+        pull(Average_fda_dims) %>%
+        as.integer()
+    } else {
+      NA
+    }
+    cat("final_avg_fda_dims: ", final_avg_fda_dims, "\n")
+    
+    return(list(best_per_fold = best_per_fold, 
+                average_k_npcs_by_metric = average_k_npcs_by_metric, 
+                best_metric = best_metric, 
+                final_avg_k = final_avg_k, 
+                final_avg_n_pcs = final_avg_n_pcs,
+                final_avg_fda_dims = final_avg_fda_dims))
+  }
+}
+```
+
+# PCA-KNN
+
+## Threshold selection
+
+As it's explained before, the rest of parameters will be fixed on this stage. The ranges of thresholds for each metric were selected by trying the distances manually between images of the same person and between images of different person. We took the min and the max distance among different trials, and the ranges are made so those min and max values found are included.
+
+
+```{r, include=FALSE, cache=TRUE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best threshold...\n")
+  param_grid_thresholds <- list(
+    n_pcs = c(30),  # Fixed n_pcs
+    k_values = c(5),  # Fixed k
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+  )
+
+best_thresholds_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
+
+saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results.rds")
+}
+```
+
+
+```{r}
+best_thresholds_pca_results <- readRDS("best_thresholds_pca_results.rds")
+
+best_thresholds_pca_results$best_thresholds_per_fold
+best_thresholds_pca_results$average_best_thresholds
+best_thresholds_pca_results$best_thresholds
+```
+
+
+## Metric, k, n_pcs selection
+
+In the previous step, we found the best threshold for each metric. So now we have fixed those values. We will iterate over the first 30 number of components. We chose that number because at any trial we did during the implementation we found better results above that number, so in order to save computational time, we limit the number of components to try. The same argument applies to the decision of trying k up to 10.
+
+```{r, include=FALSE, cache=TRUE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best params...\n")
+  best_thresholds_pca_results <- readRDS("best_thresholds_pca_results.rds")
+  best_thresholds_pca <- best_thresholds_pca_results$best_thresholds
+  
+  param_grid_others <- list(
+    n_pcs = seq(10, 30, by=1),
+    #n_pcs = c(4),
+    k_values = seq(1, 10, by=1),
+    #k_values = c(1),
+    modified_sse = c(best_thresholds_pca["modified_sse"]),
+    simplified_mahalanobis = c(best_thresholds_pca["simplified_mahalanobis"]),
+    weighted_angle = c(best_thresholds_pca["weighted_angle"])
+  )
+  
+  best_params_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
+  
+  saveRDS(best_params_pca, "best_params_pca.rds")
+}
+```
+
+
+```{r}
+best_params_pca <- readRDS("best_params_pca.rds")
+
+best_params_pca$best_per_fold
+best_params_pca$average_k_npcs_by_metric
+best_params_pca$best_metric
+best_params_pca$final_avg_k
+best_params_pca$final_avg_n_pcs
+```
+
+
+# Compare PCA vs Original image representation
+
+## Find best parameters original image representation.
+
+### Threshold selection
+Same procedure as in PCA-KNN is implemented.
+
+
+```{r, include=FALSE, cache=TRUE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best parameters...\n")
+  param_grid_thresholds <- list(
+    n_pcs = c(30),  # Fixed n_pcs
+    k_values = c(5),  # Fixed k
+    modified_sse = seq(from = 2.0e-07, to = 1.1e-05, length.out = 30), # Threshold 
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)
+  )
+  
+  best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
+  
+  saveRDS(best_thresholds_no_pca_results, "best_thresholds_no_pca_results.rds")
+}
+```
+
+```{r}
+best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results.rds")
+
+best_thresholds_no_pca_results$best_thresholds_per_fold
+best_thresholds_no_pca_results$average_best_thresholds
+best_thresholds_no_pca_results$best_thresholds
+```
+
+
+### Metric, k, n_pcs selection
+
+```{r, include=FALSE, cache=TRUE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best parameters...\n")
+  best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results.rds")
+  best_thresholds_no_pca <- best_thresholds_no_pca_results$best_thresholds
+  
+  param_grid_others <- list(
+    n_pcs = seq(10, 30, by=1),
+    #n_pcs = c(4),
+    k_values = seq(1, 10, by=1),
+    #k_values = c(1),
+    modified_sse = c(best_thresholds_no_pca["modified_sse"]),
+    simplified_mahalanobis = c(best_thresholds_no_pca["simplified_mahalanobis"]),
+    weighted_angle = c(best_thresholds_no_pca["weighted_angle"])
+  )
+  
+  best_params_no_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
+  
+  saveRDS(best_params_no_pca, "best_params_no_pca.rds")
+}
+```
+
+
+```{r}
+best_params_no_pca <- readRDS("best_params_no_pca.rds")
+best_params_no_pca
+```
+
+
+### FDA finding best parameters
+### Threshold selection
+Same procedure as in PCA-KNN is implemented.
+
+```{r, cache=TRUE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best threshold...\n")
+  param_grid_thresholds <- list(
+    n_pcs = c(24),  # Fixed n_pcs
+    k_values = c(5),  # Fixed k
+    fda_dims = c(24), #seq(10,24, by = 1)
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Not used
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Not used
+  )
+
+best_thresholds_fda_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE, apply_fda = TRUE)
+
+saveRDS(best_thresholds_fda_results, "best_thresholds_fda_results.rds")
+}
+```
+```{r}
+best_thresholds_fda_results <- readRDS("best_thresholds_fda_results.rds")
+
+best_thresholds_fda_results$best_thresholds_per_fold
+best_thresholds_fda_results$average_best_thresholds
+best_thresholds_fda_results$best_thresholds
+```
+
+
+```{r, cache=TRUE}
+if(COMPUTE_GRID_SEARCH){
+  cat("Finding best params...\n")
+  if(COMPUTE_GRID_SEARCH){
+    cat("Finding best params...\n")
+    best_thresholds_fda_results <- readRDS("best_thresholds_fda_results.rds")
+    best_thresholds_fda <- best_thresholds_fda_results$best_thresholds
+    
+    param_grid_others <- list(
+      n_pcs = seq(10, 24, by=1),
+      k_values = seq(1, 10, by=1),
+      fda_dims = seq(10,24, by = 1),
+      modified_sse = c(best_thresholds_fda["modified_sse"]), # Threshold 3e-5,
+      simplified_mahalanobis = c(best_thresholds_fda["simplified_mahalanobis"]),
+      weighted_angle = c(best_thresholds_fda["weighted_angle"])
+    )
+    
+    best_params_fda <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE, apply_fda = TRUE)
+    
+    saveRDS(best_params_fda, "best_params_fda.rds")
+  } 
+}
+
+```
+
+```{r}
+best_params_fda <- readRDS("best_params_fda.rds")
+
+best_params_fda$best_per_fold
+best_params_fda$average_k_npcs_by_metric
+best_params_fda$best_metric
+best_params_fda$final_avg_k
+best_params_fda$final_avg_n_pcs
+```
+
+
+
+
+
+
+# Conclusions
+
+The results show that applying PCA before KNN improves balanced accuracy (0.981 vs. 0.943) while significantly reducing computation time. Even if we expected a larger performance gap, the similarity in results suggests that KNN can still work well in high-dimensional spaces when properly tuned. Notice that the difference in balanced accuracy is not that big, but we can appreciate a bigger difference if we take a look to the known accuracy, suggesting that the model that is not using PCA, is finding more problems in correctly classifying the known faces. The PCA approach retains enough variance to achieve strong recognition while making training and inference more efficient. 
+
+We should choose the PCA-based KNN model because it achieves better accuracy while drastically reducing computation time and memory usage. It is more scalable, less prone to overfitting, and provides a more efficient representation of facial features without sacrificing recognition performance.
+
