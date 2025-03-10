@@ -40,10 +40,92 @@ to.plot = data.frame(x = data[,1],
 ggplot(to.plot)+ aes(x, y, color = class)+
   geom_point()+geom_density_2d()
 ```
+# Functions
+```{r}
+compute_gamma <- function(pi, phi1, phi2){
+  (pi*phi1)/((pi*phi1)+((1-pi)*phi2))
+}
+
+compute_l <- function(pi, gamma, phi1, phi2){
+  sum(gamma*log(pi) + (1-gamma)*log(1-pi)) + sum(gamma*log(phi1) + (1-gamma)*log(phi2))
+}
+
+initialize_values <- function(data, n, d, K) {
+  set.seed(123)  # Ensure reproducibility
+  
+  # Initialize mixing proportions π (equal for all Gaussians)
+  Pis <- rep(1/K, K)
+  
+  # Initialize means µ randomly chosen from the dataset
+  Mus <- data[sample(1:n, K), , drop=FALSE]  # Select K random points
+  
+  # Initialize covariance matrices Σ with the overall covariance of the data
+  Sigmas <- lapply(1:K, function(i) cov(data))  # Copy initial covariance for all clusters
+  
+  return(list(Pis = Pis, Mus = Mus, Sigmas = Sigmas))
+}
+```
 
 
 # EM Algorithm
+
 ```{r}
+
+#initial values
+tol = 10^-3
+pi = 0.5
+mu1 = data[1,]
+mu2 = data[150,]
+sigma1 = cov(data)
+sigma2 = cov(data)
+
+
+phi1 = dmvnorm(data, mu1, sigma1) # φ1 en el pdf
+phi2 = dmvnorm(data, mu2, sigma2) # φ1 en el pdf
+
+L_temp = compute_l(pi, compute_gamma(pi, phi1, phi2), phi1, phi2)
+cat("Initial log-likelihood: ", L_temp, "\n")
+
+L <- 0
+iteration_counter <- 0
+
+L = L_temp
+# Expectation step
+gamma <- compute_gamma(pi, phi1, phi2)
+
+# Maximization step
+# mu1
+mu1 <- apply(gamma*data/sum(gamma), 2, sum)
+#mu2
+mu2 <- apply((1-gamma)*data/sum(1-gamma), 2, sum)
+# sigma1
+sigma1 <- cov.wt(data, wt = gamma, method = "ML")$cov
+# sigma2
+sigma2 <- cov.wt(data, wt = 1-gamma, method = "ML")$cov
+#pi
+pi <- mean(gamma)
+
+
+phi1 = dmvnorm(data, mu1, sigma1)
+phi2 = dmvnorm(data, mu2, sigma2)
+L_temp = compute_l(pi, gamma, phi1, phi2)
+iteration_counter <- iteration_counter + 1
+cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
+
+  
+
+```
+
+
+```{r}
+compute_gamma <- function(pi, phi1, phi2){
+  (pi*phi1)/((pi*phi1)+((1-pi)*phi2))
+}
+
+compute_l <- function(pi, gamma, phi1, phi2){
+  sum(gamma*log(pi) + (1-gamma)*log(1-pi)) + sum(gamma*log(phi1) + (1-gamma)*log(phi2))
+}
+
 #initial values
 tol = 10^-3
 pi = 0.5
@@ -57,7 +139,8 @@ EM_algorithm <- function(data, pi, mu1, mu2, sigma1, sigma2, tol = 10^-2){
   phi1 = dmvnorm(data, mu1, sigma1) # φ1 en el pdf
   phi2 = dmvnorm(data, mu2, sigma2) # φ1 en el pdf
   
-  L_temp = compute_l(pi, gamma, phi1, phi2)
+  gamma <- compute_gamma(pi, phi1, phi2)
+  L_temp <- compute_l(pi, gamma, phi1, phi2)
   cat("Initial log-likelihood: ", L_temp, "\n")
 
   L <- 0
@@ -97,10 +180,155 @@ cat("EM converged in ", results$n_iterations, " iterations.\n")
 
 ```
 
+
 ```{r}
+library(ggplot2)
+library(mvtnorm)
+
+generate_gaussian_mixture_data <- function(n, d, K, seed=42) {
+  set.seed(seed)
+  
+  # Equal proportion
+  Pis <- rep(1/K, K)  
+  
+  # Generate random means and covariance matrices for each Gaussian
+  Mu <- lapply(1:K, function(i) runif(d, min = 0, max = 10))  # Random means in [0,10]
+  Sigma <- lapply(1:K, function(i) {
+    A <- matrix(runif(d*d, min=0.5, max=3), d, d)  # Random matrix
+    return(t(A) %*% A)  # Ensures positive semi-definiteness
+  })
+  
+  # Initialize data
+  data <- matrix(0, n, d)
+  z <- sample(1:K, n, replace=TRUE, prob=Pis)  # Assign clusters
+
+  for (i in 1:n) {
+    data[i, ] <- rmvnorm(1, Mu[[z[i]]], Sigma[[z[i]]])
+  }
+  
+  return(list(data = data, z = z, Mu = Mu, Sigma = Sigma, Pis = Pis))
+}
+
+# Example usage
+d = 2   # Dimensions: It's the number of values at each observation (data points)
+K = 2   # Number of Gaussian components
+n = 300 # Number of data points
+
+data_info <- generate_gaussian_mixture_data(n, d, K, seed=2)
+data <- data_info$data
+Mus <- data_info$Mu
+Sigmas <- data_info$Sigma
+Pis <- data_info$Pis
+
+z <- data_info$z
+
+if (d == 1) {
+  to.plot <- data.frame(x = data[,1], class = as.factor(z))
+  ggplot(to.plot) + aes(x, fill = class) + geom_density(alpha = 0.5) +
+    labs(title="1D Gaussian Mixture Density", x="X", y="Density") +
+    theme_minimal()
+}
+
+if (d == 2) {
+  to.plot = data.frame(x = data[,1], y = data[,2], class = as.factor(z))
+  ggplot(to.plot) + aes(x, y, color = class) + geom_point() + geom_density_2d()
+}
+
+if (d == 3) {
+  library(scatterplot3d)
+  scatterplot3d(data, color = as.numeric(z), pch = 19, 
+                main = "3D Gaussian Mixture",
+                xlab = "X", ylab = "Y", zlab = "Z")
+}
+
+```
+
+
+
+```{r}
+#tol = 10^-3
+
+#init_values <- initialize_values(data, n, d, K)
+
+#EM_algorithm(data, init_values$Pis[1], init_values$Mus[1,], init_values$Mus[2,], init_values$Sigmas[[1]], init_values$Sigmas[[2]], tol = tol)
+```
+
+# Generalization
+```{r}
+compute_gamma <- function(pi, phi) {
+  gamma <- phi * pi
+  gamma <- gamma / rowSums(gamma)
+  return(gamma)
+}
+
+compute_l <- function(pi, gamma, phi) {
+  # Generalized log-likelihood for K components
+  return(sum(log(rowSums(phi * pi))))
+}
+
+EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2) {
+  
+  K <- length(pi)  # Number of Gaussian components
+  n <- nrow(data)  # Number of data points
+  d <- ncol(data)  # Number of dimensions
+
+  # Compute initial phi values for all Gaussians
+  phi <- sapply(1:K, function(k) dmvnorm(data, mu[k,], sigma[[k]]))
+  
+  gamma <- compute_gamma(pi, phi)  # Compute probs of belonging
+
+  L_temp <- compute_l(pi, gamma, phi)  # Compute initial log-likelihood
+  cat("Initial log-likelihood: ", L_temp, "\n")
+  
+  L <- 0
+  iteration_counter <- 0
+  
+  while (abs(L - L_temp) >= tol) {
+    L <- L_temp
+
+    ## Expectation step ##
+    gamma <- compute_gamma(pi, phi)
+
+    ## Maximization step ##
+    Nk <- colSums(gamma)  # Number of points assigned to each Gaussian. Sum the columns (prob of belonging of each data point)
+    pi <- Nk / n  # Knowing how many are in each Gaussian, we can update the proportion
+    
+    # Update means
+    mu <- t(gamma) %*% data / Nk  # The mean of each component is computed by the sum(prob_belonging_component*observation)/Num_of_points_belonging
+
+    # Update covariance matrices
+    sigma <- lapply(1:K, function(k) {
+      X_centered <- sweep(data, 2, mu[k,])  # Center data
+      return((t(X_centered) %*% (X_centered * gamma[, k])) / Nk[k])  # Weighted covariance
+    })
+    
+    # Compute new phi values for all Gaussians
+    phi <- sapply(1:K, function(k) dmvnorm(data, mu[k,], sigma[[k]]))
+    
+    # Compute new log-likelihood
+    L_temp <- compute_l(pi, gamma, phi)
+    iteration_counter <- iteration_counter + 1
+    cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
+  }
+  
+  return(list(n_iterations = iteration_counter, pi = pi, mu = mu, sigma = sigma))
+}
+
+# Run EM Algorithm
+init_values <- initialize_values(data, n, d, K)
+results <- EM_algorithm(data, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-3)
+
+cat("EM converged in", results$n_iterations, "iterations.\n")
+
+```
+
+```{r}
+init_values
 results
 ```
-```{r}
 
+
+```{r}
+Mus
 ```
 
