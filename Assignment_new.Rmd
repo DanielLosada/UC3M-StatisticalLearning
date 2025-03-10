@@ -17,7 +17,7 @@ library(archive)
 library(dplyr)
 library(plotly)
 
-COMPUTE_GRID_SEARCH <- FALSE
+COMPUTE_GRID_SEARCH <- TRUE
 ```
 
 
@@ -312,11 +312,11 @@ The face recognition will be performed using a KNN algorithm. Given a new image 
 
 ### 3.1. Computing Distances 
 
-As our KNN classifier relies on computing distances between vectors, we decided to try three different metrics that showed promising results in the paper "Distance measures for PCA-based face recognition." We implemented these metrics( "`simplified_mahalanobis`", "`weighted_angle`", and "`modified_sse`") to see which one works best for our application.
+As our KNN classifier relies on computing distances between vectors, we decided to try three different metrics that showed promising results in the paper "Distance measures for PCA-based face recognition." We implemented these metrics( "`mahalanobis`", "`weighted_angle`", and "`modified_sse`") to see which one works best for our application.
 
 The function `compute_distance` is designed to calculate the distance between two vectors, $x$ and $y$, using one of the three metrics. We choose the metric via the parameter `metric`, and the function also takes a vector of eigenvalues $E$ that is used to compute the weights in some of these distance measures.
 
-For the `"simplified_mahalanobis"` metric, we first set a constant $\\alpha = 0.25$. The function then computes a weighting vector $z$ as follows:
+For the `"mahalanobis"` metric, we first set a constant $\\alpha = 0.25$. The function then computes a weighting vector $z$ as follows:
   
 $$
 z = \sqrt{\max\left(0, \frac{E}{E + \alpha^2}\right)},
@@ -348,7 +348,7 @@ $$
 # Computes the distance between 2 vectors. D is the eigenvalue list, required for some metrics. 
 compute_distance <- function(x, y, E, metric) {
     
-    if (metric == "simplified_mahalanobis") {
+    if (metric == "mahalanobis") {
       alpha <- 0.25
       z <- sqrt(pmax(0, E / (E + alpha^2)))
       return(-sum(z * x * y))
@@ -361,7 +361,7 @@ compute_distance <- function(x, y, E, metric) {
       return(sum((x - y)^2) / (sum(x^2) * sum(y^2)))
       
     } else {
-      stop("Invalid metric. Choose from 'simplified_mahalanobis', 'weighted_angle', or 'modified_sse'.")
+      stop("Invalid metric. Choose from 'mahalanobis', 'weighted_angle', or 'modified_sse'.")
     }
 }
 ```
@@ -618,7 +618,7 @@ find_best_params <- function(M, image_ids, metrics, param_grid, num_folds = 5,
       image_ids_test <- image_ids[test_indices]
       
       results <- run_knn_classification(Y_train, Y_test, image_ids_train, image_ids_test, 
-                                        metrics, param_grid, fold, n_pc = NA, E_pc = NULL, results)
+                                        metrics, param_grid, fold, n_pc = NA, E_pc = NULL, FDA_dims = NA, results)
     }
   }
   
@@ -747,18 +747,22 @@ get_best_params <- function(best_threshold = TRUE, M, image_ids, metrics, param_
 As it's explained before, the rest of parameters will be fixed on this stage. The ranges of thresholds for each metric were selected by trying the distances manually between images of the same person and between images of different person. We took the min and the max distance among different trials, and the ranges are made so those min and max values found are included.
 
 
-```{r PCA-KNN-THRESHOLD, include=FALSE, cache=TRUE}
+```{r, message=FALSE}
+print("You will not see the text output.")
+```
+
+```{r PCA-KNN-THRESHOLD, results='hide', cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
   cat("Finding best threshold...\n")
   param_grid_thresholds <- list(
     n_pcs = c(30),  # Fixed n_pcs
     k_values = c(5),  # Fixed k
-    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
-    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Threshold -6000
-    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold -0.07
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold
+    mahalanobis = seq(-6000, -1500, by = 100),# Threshold
+    weighted_angle = seq(-0.07, -0.009, by = 0.005)# Threshold
   )
 
-best_thresholds_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
+best_thresholds_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
 
 saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results.rds")
 }
@@ -776,9 +780,9 @@ best_thresholds_pca_results$best_thresholds
 
 ### 5.2 Metric, k, n_pcs selection
 
-In the previous step, we found the best threshold for each metric. So now we have fixed those values. We will iterate over the first 30 number of components. We chose that number because at any trial we did during the implementation we found better results above that number, so in order to save computational time, we limit the number of components to try. The same argument applies to the decision of trying $k$ up to 10.
+In the previous step, we found the best threshold for each metric. So now we have fixed those values. We will iterate over the first 30 number of components. We chose that number because at any trial we did during the implementation we didn't find better results above that number, so in order to save computational time, we limit the number of components to try. The same argument applies to the decision of trying $k$ up to 10.
 
-```{r PCA-KNN-OTHERS, include=FALSE, cache=TRUE}
+```{r PCA-KNN-OTHERS, results='hide', cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
   cat("Finding best params...\n")
   best_thresholds_pca_results <- readRDS("best_thresholds_pca_results.rds")
@@ -790,11 +794,11 @@ if(COMPUTE_GRID_SEARCH){
     k_values = seq(1, 10, by=1),
     #k_values = c(1),
     modified_sse = c(best_thresholds_pca["modified_sse"]),
-    simplified_mahalanobis = c(best_thresholds_pca["simplified_mahalanobis"]),
+    mahalanobis = c(best_thresholds_pca["mahalanobis"]),
     weighted_angle = c(best_thresholds_pca["weighted_angle"])
   )
   
-  best_params_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
+  best_params_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE)
   
   saveRDS(best_params_pca, "best_params_pca.rds")
 }
@@ -820,18 +824,18 @@ best_params_pca$final_avg_n_pcs
 Same procedure as in PCA-KNN is implemented.
 
 
-```{r NO-PCA THRESHOLD, include=FALSE, cache=TRUE}
+```{r NO-PCA THRESHOLD, results='hide', cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
   cat("Finding best parameters...\n")
   param_grid_thresholds <- list(
     n_pcs = c(30),  # Fixed n_pcs
     k_values = c(5),  # Fixed k
     modified_sse = seq(from = 2.0e-07, to = 1.1e-05, length.out = 30), # Threshold 
-    simplified_mahalanobis = seq(-6000, -1500, by = 100),
+    mahalanobis = seq(-6000, -1500, by = 100),
     weighted_angle = seq(-0.07, -0.009, by = 0.005)
   )
   
-  best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
+  best_thresholds_no_pca_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
   
   saveRDS(best_thresholds_no_pca_results, "best_thresholds_no_pca_results.rds")
 }
@@ -848,7 +852,7 @@ best_thresholds_no_pca_results$best_thresholds
 
 ### 6.2. Metric, k, n_pcs selection
 
-```{r NO-PCA OTHERS, include=FALSE, cache=TRUE}
+```{r NO-PCA OTHERS, results='hide', cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
   cat("Finding best parameters...\n")
   best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results.rds")
@@ -860,11 +864,11 @@ if(COMPUTE_GRID_SEARCH){
     k_values = seq(1, 10, by=1),
     #k_values = c(1),
     modified_sse = c(best_thresholds_no_pca["modified_sse"]),
-    simplified_mahalanobis = c(best_thresholds_no_pca["simplified_mahalanobis"]),
+    mahalanobis = c(best_thresholds_no_pca["mahalanobis"]),
     weighted_angle = c(best_thresholds_no_pca["weighted_angle"])
   )
   
-  best_params_no_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
+  best_params_no_pca <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 5, num_people_to_exclude=2, compute_pca=FALSE)
   
   saveRDS(best_params_no_pca, "best_params_no_pca.rds")
 }
@@ -883,7 +887,7 @@ best_params_no_pca
 
 The same procedure as in PCA-KNN is implemented. In this case, we also fix `fda_dims` to save computational time. The chosen fixed value is 24 because in this case we have 25 classes, so setting a higher value will just add up noise. 
 
-```{r PCA-FDA THRESHOLD, cache=TRUE}
+```{r PCA-FDA THRESHOLD, cache=TRUE, results='hide'}
 if(COMPUTE_GRID_SEARCH){
   cat("Finding best threshold...\n")
   param_grid_thresholds <- list(
@@ -891,11 +895,11 @@ if(COMPUTE_GRID_SEARCH){
     k_values = c(5),  # Fixed k
     fda_dims = c(24), #seq(10,24, by = 1)
     modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
-    simplified_mahalanobis = seq(-6000, -1500, by = 100),# Not used
+    mahalanobis = seq(-6000, -1500, by = 100),# Not used
     weighted_angle = seq(-0.07, -0.009, by = 0.005)# Not used
   )
 
-best_thresholds_fda_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE, apply_fda = TRUE)
+best_thresholds_fda_results <- get_best_params(best_threshold=TRUE, M,image_ids=image_ids, metrics=c('modified_sse', 'mahalanobis', 'weighted_angle'), param_grid=param_grid_thresholds, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE, apply_fda = TRUE)
 
 saveRDS(best_thresholds_fda_results, "best_thresholds_fda_results.rds")
 }
@@ -914,7 +918,7 @@ best_thresholds_fda_results$best_thresholds
 
 In this next grid search the values of the `fda_dims` start in 10 instead of starting with a lower value to save some computational time. Also, `n_pcs` is capped to 24 (instead of 30) to reduce computational time, but if it is desired, the grid can be widen to obtain an even more precise result. Actually, the best option obviously will be to compute all the combinations in only one grid, but the need to separate it in two is also obvious, because it's too computationally expensive. 
 
-```{r PCA-FDA-OTHERS, cache=TRUE}
+```{r PCA-FDA-OTHERS, results='hide', cache=TRUE}
 if(COMPUTE_GRID_SEARCH){
   cat("Finding best params...\n")
   if(COMPUTE_GRID_SEARCH){
@@ -927,11 +931,11 @@ if(COMPUTE_GRID_SEARCH){
       k_values = seq(1, 10, by=1),
       fda_dims = seq(10,24, by = 1),
       modified_sse = c(best_thresholds_fda["modified_sse"]), 
-      simplified_mahalanobis = c(best_thresholds_fda["simplified_mahalanobis"]),
+      mahalanobis = c(best_thresholds_fda["mahalanobis"]),
       weighted_angle = c(best_thresholds_fda["weighted_angle"])
     )
     
-    best_params_fda <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'simplified_mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE, apply_fda = TRUE)
+    best_params_fda <- get_best_params(best_threshold=FALSE, M,image_ids=image_ids, metrics=c('modified_sse', 'mahalanobis', 'weighted_angle'), param_grid=param_grid_others, num_folds = 15, num_people_to_exclude=2, compute_pca=TRUE, apply_fda = TRUE)
     
     saveRDS(best_params_fda, "best_params_fda.rds")
   } 
