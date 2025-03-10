@@ -311,7 +311,7 @@ EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2) {
     cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
   }
   
-  return(list(n_iterations = iteration_counter, pi = pi, mu = mu, sigma = sigma))
+  return(list(n_iterations = iteration_counter, pi = pi, mu = mu, sigma = sigma, gamma = gamma))
 }
 
 # Run EM Algorithm
@@ -323,12 +323,47 @@ cat("EM converged in", results$n_iterations, "iterations.\n")
 ```
 
 ```{r}
-init_values
-results
+library(OpenImageR)
+
+# Load Image
+img <- readImage("Melanoma.jpg")
+imageShow(img)
 ```
 
 
 ```{r}
-Mus
+library(OpenImageR)
+
+# Load Image
+img <- readImage("Melanoma.jpg")
+imageShow(img)
+
+# Convert image into a matrix of pixel values
+img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+
+# Ensure it's in matrix form (pixels as rows, channels as columns)
+img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
+dim(img_matrix)
+```
+
+```{r}
+K <- 2  # Number of clusters (e.g., skin vs lesion)
+
+# Initialize values
+init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
+
+# Run EM Algorithm
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+
+# Assign each pixel to a cluster based on gamma
+segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
+
+# Reshape segmented data back into an image format
+segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
+
+# Display segmented image
+imageShow(segmented_img)
+
+
 ```
 
