@@ -1,8 +1,8 @@
 ---
 title: "Assignment"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 date: "2025-02-25"
 ---
 
@@ -12,12 +12,13 @@ knitr::opts_chunk$set(warning = FALSE)
 knitr::opts_chunk$set(cache = TRUE)
 ```
 
-```{r}
+```{r, results='hide'}
 library(archive)
 library(dplyr)
 library(plotly)
+library(knitr)
 
-COMPUTE_GRID_SEARCH <- TRUE
+COMPUTE_GRID_SEARCH <- FALSE
 ```
 
 
@@ -772,8 +773,8 @@ saveRDS(best_thresholds_pca_results, "best_thresholds_pca_results.rds")
 ```{r}
 best_thresholds_pca_results <- readRDS("best_thresholds_pca_results.rds")
 
-best_thresholds_pca_results$best_thresholds_per_fold
-best_thresholds_pca_results$average_best_thresholds
+kable(best_thresholds_pca_results$best_thresholds_per_fold)
+kable(best_thresholds_pca_results$average_best_thresholds)
 best_thresholds_pca_results$best_thresholds
 ```
 
@@ -808,8 +809,8 @@ if(COMPUTE_GRID_SEARCH){
 ```{r}
 best_params_pca <- readRDS("best_params_pca.rds")
 
-best_params_pca$best_per_fold
-best_params_pca$average_k_npcs_by_metric
+kable(best_params_pca$best_per_fold)
+kable(best_params_pca$average_k_npcs_by_metric)
 best_params_pca$best_metric
 best_params_pca$final_avg_k
 best_params_pca$final_avg_n_pcs
@@ -844,8 +845,8 @@ if(COMPUTE_GRID_SEARCH){
 ```{r}
 best_thresholds_no_pca_results <- readRDS("best_thresholds_no_pca_results.rds")
 
-best_thresholds_no_pca_results$best_thresholds_per_fold
-best_thresholds_no_pca_results$average_best_thresholds
+kable(best_thresholds_no_pca_results$best_thresholds_per_fold)
+kable(best_thresholds_no_pca_results$average_best_thresholds)
 best_thresholds_no_pca_results$best_thresholds
 ```
 
@@ -877,7 +878,10 @@ if(COMPUTE_GRID_SEARCH){
 
 ```{r}
 best_params_no_pca <- readRDS("best_params_no_pca.rds")
-best_params_no_pca
+kable(best_params_no_pca$best_per_fold)
+kable(best_params_no_pca$average_k_npcs_by_metric)
+best_params_no_pca$best_metric
+best_params_no_pca$final_avg_k
 ```
 
 
@@ -894,7 +898,7 @@ if(COMPUTE_GRID_SEARCH){
     n_pcs = c(30),  # Fixed n_pcs
     k_values = c(5),  # Fixed k
     fda_dims = c(24), #seq(10,24, by = 1)
-    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold 3e-5
+    modified_sse = seq(3e-5, 2.5e-4, by = 5e-6), # Threshold
     mahalanobis = seq(-6000, -1500, by = 100),# Not used
     weighted_angle = seq(-0.07, -0.009, by = 0.005)# Not used
   )
@@ -908,8 +912,8 @@ saveRDS(best_thresholds_fda_results, "best_thresholds_fda_results.rds")
 ```{r}
 best_thresholds_fda_results <- readRDS("best_thresholds_fda_results.rds")
 
-best_thresholds_fda_results$best_thresholds_per_fold
-best_thresholds_fda_results$average_best_thresholds
+kable(best_thresholds_fda_results$best_thresholds_per_fold)
+kable(best_thresholds_fda_results$average_best_thresholds)
 best_thresholds_fda_results$best_thresholds
 ```
 
@@ -946,12 +950,13 @@ if(COMPUTE_GRID_SEARCH){
 ```{r, cache=TRUE}
 best_params_fda <- readRDS("best_params_fda.rds")
 
-best_params_fda$best_per_fold
-best_params_fda$average_k_npcs_by_metric
+kable(best_params_fda$best_per_fold)
+kable(best_params_fda$average_k_npcs_by_metric)
 best_params_fda$final_avg_k
 best_params_fda$final_avg_n_pcs
 best_params_fda$final_avg_fda_dims
 ```
+
 
 # 8. Conclusions
 
