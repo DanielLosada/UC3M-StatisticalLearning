@@ -14,6 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(mvtnorm)
 library(scatterplot3d)
+library(OpenImageR)
 
 Mu1 = c(1,1)
 Mu2 = c(7,7)
@@ -618,9 +619,10 @@ plot_ly(data = df_3d,
 
 ## Fotos
 
+
 ### Lunar
 ```{r}
-library(OpenImageR)
+
 
 # Load Image
 img <- readImage("Melanoma.jpg")
@@ -629,184 +631,78 @@ imageShow(img)
 
 ```{r}
 library(OpenImageR)
+library(ggplot2)
+library(gridExtra)
+library(grid)
 
-# Load Image
-img <- readImage("Melanoma.jpg")
-imageShow(img)
+segment_image_with_em <- function(image_path, K, tol = 10^-2, rgb = TRUE) {
+  
+  # Load Image
+  img <- readImage(image_path)
+  
+  # Convert image into a matrix of pixel values
+  img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+  img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)  # Ensure correct format
+  
+  # Initialize values for EM algorithm
+  init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
+  
+  # Run EM Algorithm
+  results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = tol)
+  
+  # Assign each pixel to a cluster based on gamma
+  segmented <- apply(results$gamma, 1, which.max)
+  
+  # Reshape segmented data back into an image format
+  segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
+  
+  # Convert segmented image into an RGB format or normalize grayscale
+  if (rgb) {
+    segmented_img <- convert_to_rgb(K, segmented_img)  # Ensure this function works correctly
+  } else {
+    # Normalize grayscale image to [0,1]
+    segmented_img <- (segmented_img - min(segmented_img)) / (max(segmented_img) - min(segmented_img))
+  }
+  
+  # Convert images to ggplot objects
+  original_plot <- ggplot() + 
+    annotation_custom(rasterGrob(img), xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+    ggtitle("Original Image") + theme_void()
+  
+  segmented_plot <- ggplot() + 
+    annotation_custom(rasterGrob(segmented_img), xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=Inf) +
+    ggtitle("Segmented Image") + theme_void()
+  
+  # Arrange both images side by side
+  grid.arrange(original_plot, segmented_plot, ncol = 2)
+}
 
-# Convert image into a matrix of pixel values
-img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+# Example call:
+segment_image_with_em("Melanoma.jpg", K = 2, tol = 1e-4, rgb = FALSE)
 
-# Ensure it's in matrix form (pixels as rows, channels as columns)
-img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-dim(img_matrix)
 ```
 
 ```{r}
-K <- 2  # Number of clusters (e.g., skin vs lesion)
-
-# Initialize values
-init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
-
-# Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
-
-# Assign each pixel to a cluster based on gamma
-segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
-
-# Reshape segmented data back into an image format
-segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
-
-# Display segmented image
-imageShow(segmented_img)
+segment_image_with_em("Composition_A_Mondrian.jpg", K = 2, tol = 10^-6)
 ```
-### Stats
 
 
 ```{r}
-# Load Image
-img <- readImage("Stats.jpg")
-imageShow(img)
+# Example calls to segment different images
 
-# Convert image into a matrix of pixel values
-img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
-
-# Ensure it's in matrix form (pixels as rows, channels as columns)
-img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-K <- 3  # Number of clusters (e.g., skin vs lesion)
-
-# Initialize values
-init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
-
-# Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-2)
-
-# Assign each pixel to a cluster based on gamma
-segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
-
-# Reshape segmented data back into an image format
-segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
-
-# Display segmented image
-imageShow(segmented_img)
-```
+#segment_image_with_em("Spaceship.jpg", K = 4, tol = 1e-2)
 
 
-### Spaceship
-```{r}
-# Load Image
-img <- readImage("Spaceship.jpg")
-imageShow(img)
-
-# Convert image into a matrix of pixel values
-img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
-
-# Ensure it's in matrix form (pixels as rows, channels as columns)
-img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-K <- 4  # Number of clusters (e.g., skin vs lesion)
-
-# Initialize values
-init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
-
-# Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-2)
-
-# Assign each pixel to a cluster based on gamma
-segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
-
-# Reshape segmented data back into an image format
-segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
-
-# Display segmented image
-imageShow(convert_to_rgb(k, segmented_img))
-```
-
-
-
-### Crazy
-
-```{r}
-# Load Image
-img <- readImage("Locura3.jpg")
-imageShow(img)
-
-# Convert image into a matrix of pixel values
-img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
-
-# Ensure it's in matrix form (pixels as rows, channels as columns)
-img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-K <- 2  # Number of clusters (e.g., skin vs lesion)
-
-# Initialize values
-init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
-
-# Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
-
-# Assign each pixel to a cluster based on gamma
-segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
-
-# Reshape segmented data back into an image format
-segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
-
-# Display segmented image
-imageShow(convert_to_rgb(k, segmented_img))
-```
-
-### Mondrian
-```{r}
-# Load Image
-img <- readImage("Composition_A_Mondrian.jpg")
-imageShow(img)
-
-# Convert image into a matrix of pixel values
-img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
-
-# Ensure it's in matrix form (pixels as rows, channels as columns)
-img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-K <- 2  # Number of clusters (e.g., skin vs lesion)
-
-# Initialize values
-init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
-
-# Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-2)
-
-# Assign each pixel to a cluster based on gamma
-segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
-
-# Reshape segmented data back into an image format
-segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
-
-# Display segmented image
-imageShow(convert_to_rgb(k, segmented_img))
 ```
 
 ```{r}
-# Load Image
-img <- readImage("Locura3.jpg")
-imageShow(img)
-
-# Convert image into a matrix of pixel values
-img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
-
-# Ensure it's in matrix form (pixels as rows, channels as columns)
-img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-K <- 2  # Number of clusters (e.g., skin vs lesion)
-
-# Initialize values
-init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
-
-# Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
-
-# Assign each pixel to a cluster based on gamma
-segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
-
-# Reshape segmented data back into an image format
-segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
-
-# Display segmented image
-imageShow(segmented_img)
+segment_image_with_em("Stats.jpg", K = 4, tol = 1e-1)
 ```
+```{r}
+segment_image_with_em("Locura3.jpg", K = 5, tol = 1e-4)
+```
+
+
+
+
 
