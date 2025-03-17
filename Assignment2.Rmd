@@ -10,9 +10,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Data generation
 
-```{r}
+```{r Data simulation}
 library(ggplot2)
 library(mvtnorm)
+library(scatterplot3d)
 
 Mu1 = c(1,1)
 Mu2 = c(7,7)
@@ -41,7 +42,7 @@ ggplot(to.plot)+ aes(x, y, color = class)+
   geom_point()+geom_density_2d()
 ```
 # Functions
-```{r}
+```{r Functions for EM Components (Basic Two-Cluster Version)}
 compute_gamma <- function(pi, phi1, phi2){
   (pi*phi1)/((pi*phi1)+((1-pi)*phi2))
 }
@@ -181,7 +182,7 @@ cat("EM converged in ", results$n_iterations, " iterations.\n")
 ```
 
 
-```{r}
+```{r Generating Gaussian Synthetic Data}
 library(ggplot2)
 library(mvtnorm)
 
@@ -209,6 +210,10 @@ generate_gaussian_mixture_data <- function(n, d, K, seed=42) {
   return(list(data = data, z = z, Mu = Mu, Sigma = Sigma, Pis = Pis))
 }
 
+
+```
+
+```{r Example usage}
 # Example usage
 d = 2   # Dimensions: It's the number of values at each observation (data points)
 K = 2   # Number of Gaussian components
@@ -240,9 +245,7 @@ if (d == 3) {
                 main = "3D Gaussian Mixture",
                 xlab = "X", ylab = "Y", zlab = "Z")
 }
-
 ```
-
 
 
 ```{r}
@@ -254,7 +257,7 @@ if (d == 3) {
 ```
 
 # Generalization
-```{r}
+```{r  Generalized EM Algorithm for K Clusters}
 compute_gamma <- function(pi, phi) {
   gamma <- phi * pi
   gamma <- gamma / rowSums(gamma)
@@ -322,6 +325,266 @@ cat("EM converged in", results$n_iterations, "iterations.\n")
 
 ```
 
+
+```{r}
+
+
+# 1) Generate 1D data (K=2, n=300, etc.)
+d <- 1
+K <- 2
+n <- 300
+set.seed(687)
+data_info_1d <- generate_gaussian_mixture_data(n, d, K)
+data_1d <- data_info_1d$data  # shape: (n x 1)
+true_labels_1d <- data_info_1d$z
+
+# Quick look at the generated data
+df_1d <- data.frame(
+  x       = data_1d[,1],
+  cluster = factor(true_labels_1d)
+)
+
+# Plot the histogram of the generated data (colored by the true cluster)
+ggplot(df_1d, aes(x, fill=cluster)) +
+  geom_histogram(alpha=0.5, position="identity", bins=30) +
+  theme_minimal() +
+  ggtitle("Generated 1D Gaussian Mixture")
+
+# 2) Initialize parameters for EM
+init_1d <- initialize_values(data_1d, nrow(data_1d), d, K)
+
+# 3) Run EM algorithm with logging
+res_1d <- EM_algorithm(
+  data   = data_1d,
+  pi     = init_1d$Pis,
+  mu     = init_1d$Mus,
+  sigma  = init_1d$Sigmas,
+  tol    = 1e-4
+)
+
+cat("1D EM converged in", res_1d$n_iterations, "iterations.\n")
+
+# 5) Assign each data point to the most probable cluster
+gamma_1d <- res_1d$gamma
+assigned_1d <- apply(gamma_1d, 1, which.max)
+
+# create a confusion matrix to assignate the correct label to each class
+cm <- table(true_labels_1d, assigned_1d)
+if (cm[1,1] + cm[2,2] < cm[1,2] + cm[2,1]) {
+  assigned_1d <- ifelse(assigned_1d == 1, 2, 1)
+}
+df_1d$assigned <- factor(assigned_1d)
+
+# 6) Visualize final clusters
+ggplot(df_1d, aes(x, fill=assigned)) +
+  geom_histogram(alpha=0.5, position="identity", bins=30) +
+  theme_minimal() +
+  ggtitle("1D Gaussian Mixture - EM assigned clusters")
+```
+
+
+
+
+
+```{r}
+# 1) Generate 2D data
+d <- 2
+K <- 2
+n <- 300
+set.seed(563)
+data_info_2d <- generate_gaussian_mixture_data(n, d, K)
+data_2d <- data_info_2d$data    # shape: (n x 2)
+true_labels_2d <- data_info_2d$z
+
+df_2d <- data.frame(
+  x       = data_2d[,1],
+  y       = data_2d[,2],
+  cluster = factor(true_labels_2d)
+)
+
+# Quick plot of the generated data (color = true cluster)
+ggplot(df_2d, aes(x, y, color=cluster)) +
+  geom_point() +
+  geom_density_2d() +
+  theme_minimal() +
+  ggtitle("Generated 2D Gaussian Mixture")
+
+# 2) Initialize parameters
+init_2d <- initialize_values(data_2d, nrow(data_2d), d, K)
+
+# 3) Run EM
+res_2d <- EM_algorithm(
+  data   = data_2d,
+  pi     = init_2d$Pis,
+  mu     = init_2d$Mus,
+  sigma  = init_2d$Sigmas,
+  tol    = 1e-4
+)
+
+cat("2D EM converged in", res_2d$n_iterations, "iterations.\n")
+
+# 5) Cluster assignment
+gamma_2d <- res_2d$gamma
+assigned_2d <- apply(gamma_2d, 1, which.max)
+
+# create a confusion matrix to assignate the correct label to each class
+cm <- table(true_labels_2d, assigned_2d)
+
+if (cm[1,1] + cm[2,2] < cm[1,2] + cm[2,1]) {
+  assigned_2d <- ifelse(assigned_2d == 1, 2, 1)
+}
+df_2d$assigned <- factor(assigned_2d)
+# 6) Plot the final assigned clusters
+ggplot(df_2d, aes(x, y, color=assigned)) +
+  geom_point() +
+  theme_minimal() +
+  ggtitle("2D Gaussian Mixture - EM assigned clusters")
+
+```
+
+```{r}
+# Generate 3D data with K = 3 clusters
+d <- 3
+K <- 3
+n <- 300
+set.seed(123)
+data_info_3d <- generate_gaussian_mixture_data(n, d, K)
+data_3d <- data_info_3d$data
+true_labels_3d <- data_info_3d$z
+
+# Create a data frame for the initial (true) clustering
+df_3d_initial <- data.frame(
+  x = data_3d[,1],
+  y = data_3d[,2],
+  z = data_3d[,3],
+  cluster = factor(true_labels_3d)
+)
+
+# Plot the true clusters using plotly
+library(plotly)
+initial_plot <- plot_ly(data = df_3d_initial,
+                        x = ~x,
+                        y = ~y,
+                        z = ~z,
+                        type = "scatter3d",
+                        mode = "markers",
+                        marker = list(size = 4),
+                        color = ~cluster,
+                        colors = c("red", "green", "blue")) %>%
+  layout(scene = list(
+           xaxis = list(title = "X"),
+           yaxis = list(title = "Y"),
+           zaxis = list(title = "Z")
+         ),
+         showlegend = TRUE)
+
+# Initialize parameters using your existing function
+init_3d <- initialize_values(data_3d, nrow(data_3d), d, K)
+
+# Run the EM algorithm (using your existing EM_algorithm function)
+res_3d <- EM_algorithm(data_3d, init_3d$Pis, init_3d$Mus, init_3d$Sigmas, tol = 1e-4)
+
+# Assign each data point to the most probable cluster based on EM results
+assigned_3d <- apply(res_3d$gamma, 1, which.max)
+
+# Create a data frame for the final (EM-assigned) clusters
+df_3d_final <- data.frame(
+  x = data_3d[,1],
+  y = data_3d[,2],
+  z = data_3d[,3],
+  cluster = factor(assigned_3d)
+)
+
+# Plot the EM-assigned clusters using plotly
+final_plot <- plot_ly(data = df_3d_final,
+                      x = ~x,
+                      y = ~y,
+                      z = ~z,
+                      type = "scatter3d",
+                      mode = "markers",
+                      marker = list(size = 4),
+                      color = ~cluster,
+                      colors = c("red", "green", "blue")) %>%
+  layout(scene = list(
+           xaxis = list(title = "X"),
+           yaxis = list(title = "Y"),
+           zaxis = list(title = "Z")
+         ),
+         showlegend = TRUE)
+
+# Combine the initial and final plots side by side for comparison
+combined_plot <- subplot(initial_plot, final_plot, nrows = 1, margin = 0.05)
+
+# Add a global title using an annotation rather than layout(title=...)
+combined_plot <- combined_plot %>% layout(
+  annotations = list(
+    list(
+      text = "Comparison of 3D Clusters: True vs. EM Assigned",
+      x = 0.5,
+      y = 1.05,
+      xref = "paper",
+      yref = "paper",
+      showarrow = FALSE,
+      font = list(size = 20)
+    )
+  )
+)
+
+# Display the combined plot
+combined_plot
+
+```
+
+
+```{r}
+# Generate 3D data with K = 3 clusters
+d <- 3
+K <- 3
+n <- 300
+set.seed(123)
+data_info_3d <- generate_gaussian_mixture_data(n, d, K)
+data_3d <- data_info_3d$data
+
+# Initialize parameters using your existing function
+init_3d <- initialize_values(data_3d, nrow(data_3d), d, K)
+
+# Run the EM algorithm (using your existing EM_algorithm function)
+res_3d <- EM_algorithm(data_3d, init_3d$Pis, init_3d$Mus, init_3d$Sigmas, tol = 1e-4)
+
+# Assign each data point to the most probable cluster
+assigned_3d <- apply(res_3d$gamma, 1, which.max)
+
+# Create a data frame for plotting
+df_3d <- data.frame(
+  x = data_3d[,1],
+  y = data_3d[,2],
+  z = data_3d[,3],
+  cluster = factor(assigned_3d)
+)
+
+# Use plotly to create a 3D scatter plot with a legend
+library(plotly)
+
+plot_ly(data = df_3d,
+        x = ~x,
+        y = ~y,
+        z = ~z,
+        type = "scatter3d",
+        mode = "markers",
+        marker = list(size = 4),
+        color = ~cluster,
+        colors = c("red", "green", "blue")) %>%
+  layout(title = "3D Gaussian Mixture - EM Assigned Clusters",
+         scene = list(
+           xaxis = list(title = "X"),
+           yaxis = list(title = "Y"),
+           zaxis = list(title = "Z")
+         ))
+```
+
+## Fotos
+
+### Lunar
 ```{r}
 library(OpenImageR)
 
@@ -329,7 +592,6 @@ library(OpenImageR)
 img <- readImage("Melanoma.jpg")
 imageShow(img)
 ```
-
 
 ```{r}
 library(OpenImageR)
@@ -365,5 +627,152 @@ segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
 imageShow(segmented_img)
 
 
+```
+### Stats
+
+```{r}
+# Load Image
+img <- readImage("Stats.jpg")
+imageShow(img)
+
+# Convert image into a matrix of pixel values
+img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+
+# Ensure it's in matrix form (pixels as rows, channels as columns)
+img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
+K <- 2  # Number of clusters (e.g., skin vs lesion)
+
+# Initialize values
+init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
+
+# Run EM Algorithm
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+
+# Assign each pixel to a cluster based on gamma
+segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
+
+# Reshape segmented data back into an image format
+segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
+
+# Display segmented image
+imageShow(segmented_img)
+```
+
+
+### Spaceship
+```{r}
+# Load Image
+img <- readImage("Spaceship.jpg")
+imageShow(img)
+
+# Convert image into a matrix of pixel values
+img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+
+# Ensure it's in matrix form (pixels as rows, channels as columns)
+img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
+K <- 2  # Number of clusters (e.g., skin vs lesion)
+
+# Initialize values
+init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
+
+# Run EM Algorithm
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+
+# Assign each pixel to a cluster based on gamma
+segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
+
+# Reshape segmented data back into an image format
+segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
+
+# Display segmented image
+imageShow(segmented_img)
+```
+
+
+### Crazy
+
+```{r}
+# Load Image
+img <- readImage("Locura3.jpg")
+imageShow(img)
+
+# Convert image into a matrix of pixel values
+img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+
+# Ensure it's in matrix form (pixels as rows, channels as columns)
+img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
+K <- 2  # Number of clusters (e.g., skin vs lesion)
+
+# Initialize values
+init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
+
+# Run EM Algorithm
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+
+# Assign each pixel to a cluster based on gamma
+segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
+
+# Reshape segmented data back into an image format
+segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
+
+# Display segmented image
+imageShow(segmented_img)
+```
+
+### Mondrian
+```{r}
+# Load Image
+img <- readImage("Composition_A_Mondrian.jpg")
+imageShow(img)
+
+# Convert image into a matrix of pixel values
+img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+
+# Ensure it's in matrix form (pixels as rows, channels as columns)
+img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
+K <- 2  # Number of clusters (e.g., skin vs lesion)
+
+# Initialize values
+init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
+
+# Run EM Algorithm
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+
+# Assign each pixel to a cluster based on gamma
+segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
+
+# Reshape segmented data back into an image format
+segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
+
+# Display segmented image
+imageShow(segmented_img)
+```
+
+```{r}
+# Load Image
+img <- readImage("Locura3.jpg")
+imageShow(img)
+
+# Convert image into a matrix of pixel values
+img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
+
+# Ensure it's in matrix form (pixels as rows, channels as columns)
+img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
+K <- 2  # Number of clusters (e.g., skin vs lesion)
+
+# Initialize values
+init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
+
+# Run EM Algorithm
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+
+# Assign each pixel to a cluster based on gamma
+segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
+
+# Reshape segmented data back into an image format
+segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
+
+# Display segmented image
+imageShow(segmented_img)
 ```
 
