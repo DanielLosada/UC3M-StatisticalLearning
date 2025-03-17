@@ -43,13 +43,13 @@ ggplot(to.plot)+ aes(x, y, color = class)+
 ```
 # Functions
 ```{r Functions for EM Components (Basic Two-Cluster Version)}
-compute_gamma <- function(pi, phi1, phi2){
-  (pi*phi1)/((pi*phi1)+((1-pi)*phi2))
-}
+#compute_gamma <- function(pi, phi1, phi2){
+#  (pi*phi1)/((pi*phi1)+((1-pi)*phi2))
+#}
 
-compute_l <- function(pi, gamma, phi1, phi2){
-  sum(gamma*log(pi) + (1-gamma)*log(1-pi)) + sum(gamma*log(phi1) + (1-gamma)*log(phi2))
-}
+#compute_l <- function(pi, gamma, phi1, phi2){
+#  sum(gamma*log(pi) + (1-gamma)*log(1-pi)) + sum(gamma*log(phi1) + (1-gamma)*log(phi2))
+#}
 
 initialize_values <- function(data, n, d, K) {
   set.seed(123)  # Ensure reproducibility
@@ -64,6 +64,30 @@ initialize_values <- function(data, n, d, K) {
   Sigmas <- lapply(1:K, function(i) cov(data))  # Copy initial covariance for all clusters
   
   return(list(Pis = Pis, Mus = Mus, Sigmas = Sigmas))
+}
+
+convert_to_rgb <- function(k, segmented_img){
+  my_colors <- rainbow(K)
+  
+  # Suppose segmented_img is the matrix of labels
+  height <- nrow(segmented_img)
+  width  <- ncol(segmented_img)
+  
+  # Create an empty 3D array for the colored image
+  segmented_rgb <- array(0, dim = c(height, width, 3))
+  
+  # Fill in the array by mapping each cluster to its color
+  for (k in seq_len(K)) {
+    # Convert the k-th color to an (R,G,B) vector in [0,1]
+    rgb_vals <- col2rgb(my_colors[k]) / 255
+    
+    # Where the segmentation == k, assign the color
+    mask <- (segmented_img == k)
+    segmented_rgb[,,1][mask] <- rgb_vals[1]  # R channel
+    segmented_rgb[,,2][mask] <- rgb_vals[2]  # G channel
+    segmented_rgb[,,3][mask] <- rgb_vals[3]  # B channel
+  }
+  return(segmented_rgb)
 }
 ```
 
@@ -269,7 +293,7 @@ compute_l <- function(pi, gamma, phi) {
   return(sum(log(rowSums(phi * pi))))
 }
 
-EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2) {
+EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2, verbose=FALSE) {
   
   K <- length(pi)  # Number of Gaussian components
   n <- nrow(data)  # Number of data points
@@ -281,7 +305,9 @@ EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2) {
   gamma <- compute_gamma(pi, phi)  # Compute probs of belonging
 
   L_temp <- compute_l(pi, gamma, phi)  # Compute initial log-likelihood
-  cat("Initial log-likelihood: ", L_temp, "\n")
+  if(verbose){
+    cat("Initial log-likelihood: ", L_temp, "\n")
+  }
   
   L <- 0
   iteration_counter <- 0
@@ -302,7 +328,14 @@ EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2) {
     # Update covariance matrices
     sigma <- lapply(1:K, function(k) {
       X_centered <- sweep(data, 2, mu[k,])  # Center data
-      return((t(X_centered) %*% (X_centered * gamma[, k])) / Nk[k])  # Weighted covariance
+      sigma_k <- (t(X_centered) %*% (X_centered * gamma[, k])) / Nk[k]
+      
+      # --- REGULARIZE the covariance to prevent singularities ---
+      # For example, add a small value (epsilon) to the diagonal:
+      epsilon <- 1e-6
+      sigma_k <- sigma_k + diag(epsilon, ncol(data))
+      
+      return(sigma_k)
     })
     
     # Compute new phi values for all Gaussians
@@ -311,7 +344,9 @@ EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2) {
     # Compute new log-likelihood
     L_temp <- compute_l(pi, gamma, phi)
     iteration_counter <- iteration_counter + 1
-    cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
+    if(verbose){
+      cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
+    }
   }
   
   return(list(n_iterations = iteration_counter, pi = pi, mu = mu, sigma = sigma, gamma = gamma))
@@ -625,10 +660,9 @@ segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
 
 # Display segmented image
 imageShow(segmented_img)
-
-
 ```
 ### Stats
+
 
 ```{r}
 # Load Image
@@ -640,13 +674,13 @@ img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
 
 # Ensure it's in matrix form (pixels as rows, channels as columns)
 img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-K <- 2  # Number of clusters (e.g., skin vs lesion)
+K <- 3  # Number of clusters (e.g., skin vs lesion)
 
 # Initialize values
 init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
 
 # Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-2)
 
 # Assign each pixel to a cluster based on gamma
 segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
@@ -670,13 +704,13 @@ img_matrix <- apply(img, 3, as.vector)  # Convert each color channel to a vector
 
 # Ensure it's in matrix form (pixels as rows, channels as columns)
 img_matrix <- matrix(img_matrix, ncol = 3, byrow = FALSE)
-K <- 2  # Number of clusters (e.g., skin vs lesion)
+K <- 4  # Number of clusters (e.g., skin vs lesion)
 
 # Initialize values
 init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
 
 # Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-2)
 
 # Assign each pixel to a cluster based on gamma
 segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
@@ -685,8 +719,9 @@ segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most
 segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
 
 # Display segmented image
-imageShow(segmented_img)
+imageShow(convert_to_rgb(k, segmented_img))
 ```
+
 
 
 ### Crazy
@@ -716,7 +751,7 @@ segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most
 segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
 
 # Display segmented image
-imageShow(segmented_img)
+imageShow(convert_to_rgb(k, segmented_img))
 ```
 
 ### Mondrian
@@ -736,7 +771,7 @@ K <- 2  # Number of clusters (e.g., skin vs lesion)
 init_values <- initialize_values(img_matrix, nrow(img_matrix), 3, K)
 
 # Run EM Algorithm
-results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-4)
+results <- EM_algorithm(img_matrix, init_values$Pis, init_values$Mus, init_values$Sigmas, tol = 10^-2)
 
 # Assign each pixel to a cluster based on gamma
 segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most probable cluster
@@ -745,7 +780,7 @@ segmented <- apply(results$gamma, 1, which.max)  # Assign each pixel to the most
 segmented_img <- matrix(segmented, nrow = dim(img)[1], ncol = dim(img)[2])
 
 # Display segmented image
-imageShow(segmented_img)
+imageShow(convert_to_rgb(k, segmented_img))
 ```
 
 ```{r}
