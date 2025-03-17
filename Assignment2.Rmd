@@ -331,7 +331,6 @@ EM_algorithm <- function(data, pi, mu, sigma, tol = 10^-2, verbose=FALSE) {
       sigma_k <- (t(X_centered) %*% (X_centered * gamma[, k])) / Nk[k]
       
       # --- REGULARIZE the covariance to prevent singularities ---
-      # For example, add a small value (epsilon) to the diagonal:
       epsilon <- 1e-6
       sigma_k <- sigma_k + diag(epsilon, ncol(data))
       
