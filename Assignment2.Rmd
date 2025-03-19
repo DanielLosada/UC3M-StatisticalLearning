@@ -12,6 +12,10 @@ library(ggplot2)
 library(mvtnorm)
 library(scatterplot3d)
 library(OpenImageR)
+library(gridExtra)
+library(grid)
+library(plotly)
+library(ellipse)  
 ```
 
 
@@ -63,8 +67,7 @@ convert_to_rgb <- function(k, segmented_img){
 
 
 ```{r Generating Gaussian Synthetic Data}
-library(ggplot2)
-library(mvtnorm)
+
 
 generate_gaussian_mixture_data <- function(n, d, K, seed=42) {
   set.seed(seed)
@@ -212,9 +215,6 @@ cat("EM converged in", results$n_iterations, "iterations.\n")
 ## NUEVAAA
 
 ```{r Generalized EM Algorithm for K Clusters}
-library(mvtnorm)
-library(plotly)
-library(ellipse)  
 
 # --- Modified EM_algorithm (Storing History for the First 8 Iterations) ---
 compute_gamma <- function(pi, phi) {
@@ -643,10 +643,7 @@ param_plots_3d[[5]]
 
 ## Fotos
 ```{r}
-library(OpenImageR)
-library(ggplot2)
-library(gridExtra)
-library(grid)
+
 
 segment_image_with_em <- function(image_path, K, tol = 10^-2, rgb = TRUE) {
   
