@@ -6,51 +6,19 @@ date: "2025-03-10"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-```
+knitr::opts_chunk$set(cache = TRUE)
 
-# Data generation
-
-```{r Data simulation}
 library(ggplot2)
 library(mvtnorm)
 library(scatterplot3d)
 library(OpenImageR)
-
-Mu1 = c(1,1)
-Mu2 = c(7,7)
-Sigma1 = matrix(c(2, 1, 1, 1), 2,2)
-Sigma2 = matrix(c(2, 2, 2, 5), 2,2)
-
-pi = 1/3
-n = 300
-
-set.seed(2)
-data = matrix(0, n, 2)
-z = rep(0,n)
-for (i in 1:n){
-  z[i] = rbinom(1,1,pi)
-  if (z[i] ==1){
-    data[i,] = rmvnorm(1, Mu1,Sigma1)
-  }else{
-    data[i,] = rmvnorm(1, Mu2,Sigma2)
-  }
-}
-
-to.plot = data.frame(x = data[,1], 
-                  y = data[,2], 
-                  class =  z)
-ggplot(to.plot)+ aes(x, y, color = class)+
-  geom_point()+geom_density_2d()
 ```
-# Functions
-```{r Functions for EM Components (Basic Two-Cluster Version)}
-#compute_gamma <- function(pi, phi1, phi2){
-#  (pi*phi1)/((pi*phi1)+((1-pi)*phi2))
-#}
 
-#compute_l <- function(pi, gamma, phi1, phi2){
-#  sum(gamma*log(pi) + (1-gamma)*log(1-pi)) + sum(gamma*log(phi1) + (1-gamma)*log(phi2))
-#}
+
+
+
+# Some Helper Functions
+```{r initialize_values}
 
 initialize_values <- function(data, n, d, K) {
   set.seed(123)  # Ensure reproducibility
@@ -92,119 +60,6 @@ convert_to_rgb <- function(k, segmented_img){
 }
 ```
 
-
-# EM Algorithm
-
-```{r}
-
-#initial values
-tol = 10^-3
-pi = 0.5
-mu1 = data[1,]
-mu2 = data[150,]
-sigma1 = cov(data)
-sigma2 = cov(data)
-
-
-phi1 = dmvnorm(data, mu1, sigma1) # φ1 en el pdf
-phi2 = dmvnorm(data, mu2, sigma2) # φ1 en el pdf
-
-L_temp = compute_l(pi, compute_gamma(pi, phi1, phi2), phi1, phi2)
-cat("Initial log-likelihood: ", L_temp, "\n")
-
-L <- 0
-iteration_counter <- 0
-
-L = L_temp
-# Expectation step
-gamma <- compute_gamma(pi, phi1, phi2)
-
-# Maximization step
-# mu1
-mu1 <- apply(gamma*data/sum(gamma), 2, sum)
-#mu2
-mu2 <- apply((1-gamma)*data/sum(1-gamma), 2, sum)
-# sigma1
-sigma1 <- cov.wt(data, wt = gamma, method = "ML")$cov
-# sigma2
-sigma2 <- cov.wt(data, wt = 1-gamma, method = "ML")$cov
-#pi
-pi <- mean(gamma)
-
-
-phi1 = dmvnorm(data, mu1, sigma1)
-phi2 = dmvnorm(data, mu2, sigma2)
-L_temp = compute_l(pi, gamma, phi1, phi2)
-iteration_counter <- iteration_counter + 1
-cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
-
-  
-
-```
-
-
-```{r}
-compute_gamma <- function(pi, phi1, phi2){
-  (pi*phi1)/((pi*phi1)+((1-pi)*phi2))
-}
-
-compute_l <- function(pi, gamma, phi1, phi2){
-  sum(gamma*log(pi) + (1-gamma)*log(1-pi)) + sum(gamma*log(phi1) + (1-gamma)*log(phi2))
-}
-
-#initial values
-tol = 10^-3
-pi = 0.5
-mu1 = data[1,]
-mu2 = data[150,]
-sigma1 = cov(data)
-sigma2 = cov(data)
-
-EM_algorithm <- function(data, pi, mu1, mu2, sigma1, sigma2, tol = 10^-2){
-  
-  phi1 = dmvnorm(data, mu1, sigma1) # φ1 en el pdf
-  phi2 = dmvnorm(data, mu2, sigma2) # φ1 en el pdf
-  
-  gamma <- compute_gamma(pi, phi1, phi2)
-  L_temp <- compute_l(pi, gamma, phi1, phi2)
-  cat("Initial log-likelihood: ", L_temp, "\n")
-
-  L <- 0
-  iteration_counter <- 0
-  
-  while (abs(L-L_temp)>=tol) {
-    L = L_temp
-    # Expectation step
-    gamma <- compute_gamma(pi, phi1, phi2)
-    
-    # Maximization step
-    # mu1
-    mu1 <- apply(gamma*data/sum(gamma), 2, sum)
-    #mu2
-    mu2 <- apply((1-gamma)*data/sum(1-gamma), 2, sum)
-    # sigma1
-    sigma1 <- cov.wt(data, wt = gamma, method = "ML")$cov
-    # sigma2
-    sigma2 <- cov.wt(data, wt = 1-gamma, method = "ML")$cov
-    #pi
-    pi <- mean(gamma)
-    
-    
-    phi1 = dmvnorm(data, mu1, sigma1)
-    phi2 = dmvnorm(data, mu2, sigma2)
-    L_temp = compute_l(pi, gamma, phi1, phi2)
-    iteration_counter <- iteration_counter + 1
-    cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
-  }
-  
-  return(list(n_iterations=iteration_counter, pi=pi, mu1=mu1, mu2=mu2, sigma1=sigma1, sigma2=sigma2))
-}
-
-results <- EM_algorithm(data, pi, mu1, mu2, sigma1, sigma2, tol = tol)
-
-cat("EM converged in ", results$n_iterations, " iterations.\n")
-
-```
 
 
 ```{r Generating Gaussian Synthetic Data}
@@ -273,16 +128,10 @@ if (d == 3) {
 ```
 
 
+# EM Algorithm Generalization
+
+## ANTIGUAA
 ```{r}
-#tol = 10^-3
-
-#init_values <- initialize_values(data, n, d, K)
-
-#EM_algorithm(data, init_values$Pis[1], init_values$Mus[1,], init_values$Mus[2,], init_values$Sigmas[[1]], init_values$Sigmas[[2]], tol = tol)
-```
-
-# Generalization
-```{r  Generalized EM Algorithm for K Clusters}
 compute_gamma <- function(pi, phi) {
   gamma <- phi * pi
   gamma <- gamma / rowSums(gamma)
@@ -360,7 +209,82 @@ cat("EM converged in", results$n_iterations, "iterations.\n")
 
 ```
 
+## NUEVAAA
 
+```{r Generalized EM Algorithm for K Clusters}
+library(mvtnorm)
+library(plotly)
+library(ellipse)  
+
+# --- Modified EM_algorithm (Storing History for the First 8 Iterations) ---
+compute_gamma <- function(pi, phi) {
+  gamma <- phi * pi
+  gamma <- gamma / rowSums(gamma)
+  return(gamma)
+}
+
+compute_l <- function(pi, gamma, phi) {
+  return(sum(log(rowSums(phi * pi))))
+}
+
+EM_algorithm <- function(data, pi, mu, sigma, tol = 1e-2, verbose = FALSE) {
+  K <- length(pi)
+  n <- nrow(data)
+  d <- ncol(data)
+  
+  phi <- sapply(1:K, function(k) dmvnorm(data, mu[k,], sigma[[k]]))
+  gamma <- compute_gamma(pi, phi)
+  L_temp <- compute_l(pi, gamma, phi)
+  if(verbose){ cat("Initial log-likelihood: ", L_temp, "\n") }
+  
+  L <- 0
+  iteration_counter <- 0
+  
+  # Store histories for the first 8 iterations
+  gamma_history <- list()
+  mu_history <- list()
+  sigma_history <- list()
+  
+  while (abs(L - L_temp) >= tol) {
+    L <- L_temp
+    gamma <- compute_gamma(pi, phi)
+    if(iteration_counter < 8) {
+      gamma_history[[iteration_counter + 1]] <- gamma
+      mu_history[[iteration_counter + 1]] <- mu
+      sigma_history[[iteration_counter + 1]] <- sigma
+    }
+    
+    Nk <- colSums(gamma)
+    pi <- Nk / n
+    mu <- t(gamma) %*% data / Nk
+    sigma <- lapply(1:K, function(k) {
+      X_centered <- sweep(data, 2, mu[k,])
+      sigma_k <- (t(X_centered) %*% (X_centered * gamma[, k])) / Nk[k]
+      epsilon <- 1e-6
+      sigma_k <- sigma_k + diag(epsilon, ncol(data))
+      return(sigma_k)
+    })
+    
+    phi <- sapply(1:K, function(k) dmvnorm(data, mu[k,], sigma[[k]]))
+    L_temp <- compute_l(pi, gamma, phi)
+    iteration_counter <- iteration_counter + 1
+    if(verbose){
+      cat("Iteration: ", iteration_counter, " | Current log-likelihood: ", L_temp, "\n")
+    }
+  }
+  
+  return(list(n_iterations = iteration_counter, pi = pi, mu = mu, sigma = sigma,
+              gamma = gamma, gamma_history = gamma_history, mu_history = mu_history,
+              sigma_history = sigma_history))
+}
+```
+
+
+
+
+### Visualizations
+
+#### 1D
 ```{r}
 
 
@@ -368,7 +292,7 @@ cat("EM converged in", results$n_iterations, "iterations.\n")
 d <- 1
 K <- 2
 n <- 300
-set.seed(687)
+set.seed(563)
 data_info_1d <- generate_gaussian_mixture_data(n, d, K)
 data_1d <- data_info_1d$data  # shape: (n x 1)
 true_labels_1d <- data_info_1d$z
@@ -418,10 +342,12 @@ ggplot(df_1d, aes(x, fill=assigned)) +
 ```
 
 
+### 2D
 
-
-
+ K = 2
 ```{r}
+# --- 2D Data Generation and Final Clustering Visualization --- #
+
 # 1) Generate 2D data
 d <- 2
 K <- 2
@@ -432,203 +358,290 @@ data_2d <- data_info_2d$data    # shape: (n x 2)
 true_labels_2d <- data_info_2d$z
 
 df_2d <- data.frame(
-  x       = data_2d[,1],
-  y       = data_2d[,2],
+  x = data_2d[,1],
+  y = data_2d[,2],
   cluster = factor(true_labels_2d)
 )
 
-# Quick plot of the generated data (color = true cluster)
-ggplot(df_2d, aes(x, y, color=cluster)) +
+# Plot the generated data (before EM)
+ggplot(df_2d, aes(x, y, color = cluster)) +
   geom_point() +
   geom_density_2d() +
   theme_minimal() +
-  ggtitle("Generated 2D Gaussian Mixture")
+  ggtitle("Generated 2D Gaussian Mixture (True Labels)")
 
 # 2) Initialize parameters
 init_2d <- initialize_values(data_2d, nrow(data_2d), d, K)
 
-# 3) Run EM
-res_2d <- EM_algorithm(
-  data   = data_2d,
-  pi     = init_2d$Pis,
-  mu     = init_2d$Mus,
-  sigma  = init_2d$Sigmas,
-  tol    = 1e-4
-)
-
+# 3) Run EM Algorithm (storing history for first 8 iterations)
+res_2d <- EM_algorithm(data_2d, init_2d$Pis, init_2d$Mus, init_2d$Sigmas, tol = 1e-4)
 cat("2D EM converged in", res_2d$n_iterations, "iterations.\n")
 
-# 5) Cluster assignment
+# 4) Final cluster assignment
 gamma_2d <- res_2d$gamma
 assigned_2d <- apply(gamma_2d, 1, which.max)
 
-# create a confusion matrix to assignate the correct label to each class
+# Create confusion matrix to re-label if necessary
 cm <- table(true_labels_2d, assigned_2d)
-
 if (cm[1,1] + cm[2,2] < cm[1,2] + cm[2,1]) {
   assigned_2d <- ifelse(assigned_2d == 1, 2, 1)
 }
 df_2d$assigned <- factor(assigned_2d)
-# 6) Plot the final assigned clusters
-ggplot(df_2d, aes(x, y, color=assigned)) +
+
+# Plot the final clustering (after EM)
+ggplot(df_2d, aes(x, y, color = assigned)) +
   geom_point() +
   theme_minimal() +
-  ggtitle("2D Gaussian Mixture - EM assigned clusters")
+  ggtitle("2D Gaussian Mixture - EM Assigned Clusters")
 
+# --- 5a) Visualization: Gamma Evolution (During EM) --- #
+
+# Plot the evolution of the probability (gamma) for cluster 1
+plots_gamma <- list()
+for (i in 1:length(res_2d$gamma_history)) {
+  gamma_iter <- res_2d$gamma_history[[i]]
+  df_gamma <- data.frame(x = data_2d[,1], y = data_2d[,2], prob_cluster1 = gamma_iter[,1])
+  
+  p_gamma <- ggplot(df_gamma, aes(x = x, y = y, color = prob_cluster1)) +
+    geom_point() +
+    scale_color_gradient(low = "blue", high = "red") +
+    ggtitle(paste("Gamma Evolution - Iteration", i)) +
+    theme_minimal()
+  
+  plots_gamma[[i]] <- p_gamma
+}
+
+# Plot gamma evolution in a grid (separately)
+grid.arrange(grobs = plots_gamma, ncol = 4, top = "Gamma Evolution (Probability for Cluster 1)")
+
+# --- 5b) Visualization: Parameter Evolution (During EM) --- #
+
+# Plot the evolution of the estimated means and covariance ellipses
+plots_params <- list()
+for (i in 1:length(res_2d$mu_history)) {
+  current_mu <- res_2d$mu_history[[i]]
+  current_sigma <- res_2d$sigma_history[[i]]
+  
+  p_param <- ggplot(df_2d, aes(x = x, y = y)) +
+    geom_point(alpha = 0.5, color = "gray") +
+    ggtitle(paste("Parameter Evolution - Iteration", i)) +
+    theme_minimal()
+  
+  for (k in 1:K) {
+    ellipse_points <- as.data.frame(ellipse(current_sigma[[k]], centre = current_mu[k,], level = 0.95))
+    p_param <- p_param +
+      geom_path(data = ellipse_points, aes(x = x, y = y),
+                color = ifelse(k == 1, "red", "blue"), size = 1) +
+      geom_point(aes(x = current_mu[k, 1], y = current_mu[k, 2]),
+                 color = ifelse(k == 1, "red", "blue"), size = 3)
+  }
+  plots_params[[i]] <- p_param
+}
+
+# Plot parameter evolution in a grid (separately)
+grid.arrange(grobs = plots_params, ncol = 4, top = "Parameter Evolution (Means & Covariance Ellipses)")
 ```
 
+K = 3
+
 ```{r}
-# Generate 3D data with K = 3 clusters
-d <- 3
+# --- 1) Generate 2D data ---
+d <- 2
 K <- 3
 n <- 300
-set.seed(123)
+set.seed(563)
+data_info_2d <- generate_gaussian_mixture_data(n, d, K)
+data_2d <- data_info_2d$data    # (n x 2)
+true_labels_2d <- data_info_2d$z
+
+df_2d <- data.frame(
+  x = data_2d[,1],
+  y = data_2d[,2],
+  cluster = factor(true_labels_2d)
+)
+
+# --- Visualization: Before EM (True Labels) ---
+p_before <- ggplot(df_2d, aes(x, y, color = cluster)) +
+  geom_point() +
+  geom_density_2d() +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  theme_minimal() +
+  ggtitle("Generated 2D Data (True Labels)")
+print(p_before)
+
+# --- 2) Initialize parameters ---
+init_2d <- initialize_values(data_2d, nrow(data_2d), d, K)
+
+# --- 3) Run EM Algorithm (storing history for first 8 iterations) ---
+res_2d <- EM_algorithm(data_2d, init_2d$Pis, init_2d$Mus, init_2d$Sigmas, tol = 1e-4)
+cat("2D EM converged in", res_2d$n_iterations, "iterations.\n")
+
+# --- 4) Final Cluster Assignment ---
+gamma_2d <- res_2d$gamma
+assigned_2d <- apply(gamma_2d, 1, which.max)
+df_2d$assigned <- factor(assigned_2d)
+
+p_after <- ggplot(df_2d, aes(x, y, color = assigned)) +
+  geom_point() +
+  scale_color_manual(values = c("red", "blue", "green")) +
+  theme_minimal() +
+  ggtitle("2D Gaussian Mixture - EM Assigned Clusters (K = 3)")
+print(p_after)
+
+# --- 5a) Visualization: Gamma Evolution (During EM) ---
+# Plot the evolution of the probability (gamma) for cluster 1
+plots_gamma <- list()
+for (i in 1:length(res_2d$gamma_history)) {
+  gamma_iter <- res_2d$gamma_history[[i]]
+  df_gamma <- data.frame(x = data_2d[,1], y = data_2d[,2], prob_cluster1 = gamma_iter[,1])
+  
+  p_gamma <- ggplot(df_gamma, aes(x = x, y = y, color = prob_cluster1)) +
+    geom_point() +
+    scale_color_gradient(low = "blue", high = "red") +
+    ggtitle(paste("Gamma Evolution - Iteration", i, "(Prob for Cluster 1)")) +
+    theme_minimal()
+  
+  plots_gamma[[i]] <- p_gamma
+}
+grid.arrange(grobs = plots_gamma, ncol = 4, top = "Gamma Evolution (Probability for Cluster 1)")
+
+# --- 5b) Visualization: Parameter Evolution (During EM) ---
+# Use a color vector for 3 clusters
+color_vec <- c("red", "blue", "green")
+plots_params <- list()
+for (i in 1:length(res_2d$mu_history)) {
+  current_mu <- res_2d$mu_history[[i]]
+  current_sigma <- res_2d$sigma_history[[i]]
+  
+  p_param <- ggplot(df_2d, aes(x = x, y = y)) +
+    geom_point(alpha = 0.5, color = "gray") +
+    ggtitle(paste("Parameter Evolution - Iteration", i)) +
+    theme_minimal()
+  
+  for (k in 1:K) {
+    ellipse_points <- as.data.frame(ellipse(current_sigma[[k]], centre = current_mu[k,], level = 0.95))
+    p_param <- p_param +
+      geom_path(data = ellipse_points, aes(x = x, y = y),
+                color = color_vec[k], size = 1) +
+      geom_point(aes(x = current_mu[k, 1], y = current_mu[k, 2]),
+                 color = color_vec[k], size = 3)
+  }
+  plots_params[[i]] <- p_param
+}
+grid.arrange(grobs = plots_params, ncol = 4, top = "Parameter Evolution (Means & Covariance Ellipses)")
+```
+
+### 3D
+
+ K = 2
+```{r}
+# --- 3D Data Generation ---
+set.seed(563)
+d <- 3
+K <- 2
+n <- 300
 data_info_3d <- generate_gaussian_mixture_data(n, d, K)
-data_3d <- data_info_3d$data
+data_3d <- data_info_3d$data    # (n x 3)
 true_labels_3d <- data_info_3d$z
+df_3d <- data.frame(x = data_3d[,1], y = data_3d[,2], z = data_3d[,3],
+                    cluster = factor(true_labels_3d))
 
-# Create a data frame for the initial (true) clustering
-df_3d_initial <- data.frame(
-  x = data_3d[,1],
-  y = data_3d[,2],
-  z = data_3d[,3],
-  cluster = factor(true_labels_3d)
-)
+# --- Visualization: Before EM (True Labels) ---
+p_before <- plot_ly(df_3d, x = ~x, y = ~y, z = ~z, color = ~cluster,
+                    colors = c("red", "blue"), type = "scatter3d", mode = "markers") %>% 
+  layout(title = "Generated 3D Data (True Labels)")
+p_before
 
-# Plot the true clusters using plotly
-library(plotly)
-initial_plot <- plot_ly(data = df_3d_initial,
-                        x = ~x,
-                        y = ~y,
-                        z = ~z,
-                        type = "scatter3d",
-                        mode = "markers",
-                        marker = list(size = 4),
-                        color = ~cluster,
-                        colors = c("red", "green", "blue")) %>%
-  layout(scene = list(
-           xaxis = list(title = "X"),
-           yaxis = list(title = "Y"),
-           zaxis = list(title = "Z")
-         ),
-         showlegend = TRUE)
-
-# Initialize parameters using your existing function
+# --- Run EM Algorithm ---
 init_3d <- initialize_values(data_3d, nrow(data_3d), d, K)
+res_3d <- EM_algorithm(data_3d, init_3d$Pis, init_3d$Mus, init_3d$Sigmas, tol = 1e-4, verbose = TRUE)
 
-# Run the EM algorithm (using your existing EM_algorithm function)
-res_3d <- EM_algorithm(data_3d, init_3d$Pis, init_3d$Mus, init_3d$Sigmas, tol = 1e-4)
+# --- Final Clustering: After EM ---
+gamma_3d <- res_3d$gamma
+assigned_3d <- apply(gamma_3d, 1, which.max)
+df_3d$assigned <- factor(assigned_3d)
+p_after <- plot_ly(df_3d, x = ~x, y = ~y, z = ~z, color = ~assigned,
+                   colors = c("red", "blue"), type = "scatter3d", mode = "markers") %>% 
+  layout(title = "Final Clustering after EM (3D)")
+p_after
 
-# Assign each data point to the most probable cluster based on EM results
-assigned_3d <- apply(res_3d$gamma, 1, which.max)
+# --- 3a) Gamma Evolution Visualization (During EM) ---
+gamma_plots_3d <- list()
+for (i in 1:length(res_3d$gamma_history)) {
+  gamma_iter <- res_3d$gamma_history[[i]]
+  df_gamma <- data.frame(x = data_3d[,1], y = data_3d[,2], z = data_3d[,3],
+                         prob_cluster1 = gamma_iter[,1])
+  p_gamma <- plot_ly(df_gamma, x = ~x, y = ~y, z = ~z, 
+                     color = ~prob_cluster1, colors = "RdBu", type = "scatter3d", mode = "markers") %>%
+    layout(title = paste("Gamma Evolution - Iteration", i))
+  gamma_plots_3d[[i]] <- p_gamma
+}
+# Display the gamma evolution plots separately (for example, display the first one)
+gamma_plots_3d[[1]]
+gamma_plots_3d[[2]]
+gamma_plots_3d[[3]]
 
-# Create a data frame for the final (EM-assigned) clusters
-df_3d_final <- data.frame(
-  x = data_3d[,1],
-  y = data_3d[,2],
-  z = data_3d[,3],
-  cluster = factor(assigned_3d)
-)
 
-# Plot the EM-assigned clusters using plotly
-final_plot <- plot_ly(data = df_3d_final,
-                      x = ~x,
-                      y = ~y,
-                      z = ~z,
-                      type = "scatter3d",
-                      mode = "markers",
-                      marker = list(size = 4),
-                      color = ~cluster,
-                      colors = c("red", "green", "blue")) %>%
-  layout(scene = list(
-           xaxis = list(title = "X"),
-           yaxis = list(title = "Y"),
-           zaxis = list(title = "Z")
-         ),
-         showlegend = TRUE)
 
-# Combine the initial and final plots side by side for comparison
-combined_plot <- subplot(initial_plot, final_plot, nrows = 1, margin = 0.05)
+# For generating ellipsoidal points
 
-# Add a global title using an annotation rather than layout(title=...)
-combined_plot <- combined_plot %>% layout(
-  annotations = list(
-    list(
-      text = "Comparison of 3D Clusters: True vs. EM Assigned",
-      x = 0.5,
-      y = 1.05,
-      xref = "paper",
-      yref = "paper",
-      showarrow = FALSE,
-      font = list(size = 20)
-    )
-  )
-)
+# --- Helper Function: Generate Ellipsoid Points in 3D ---
+ellipsoid_points <- function(mu, sigma, level = 0.95, n = 20) {
+  # Compute the scaling constant from the chi-square distribution with 3 degrees of freedom
+  c_val <- qchisq(level, df = 3)
+  # Create a grid in spherical coordinates
+  u <- seq(0, 2*pi, length.out = n)
+  v <- seq(0, pi, length.out = n)
+  grid <- expand.grid(u = u, v = v)
+  x <- cos(grid$u) * sin(grid$v)
+  y <- sin(grid$u) * sin(grid$v)
+  z <- cos(grid$v)
+  pts <- cbind(x, y, z) * sqrt(c_val)
+  # Map unit sphere to ellipsoid via eigen-decomposition of sigma
+  eig <- eigen(sigma)
+  ellip <- t(eig$vectors %*% diag(sqrt(eig$values)) %*% t(pts))
+  ellip <- sweep(ellip, 2, mu, "+")
+  ellip_df <- data.frame(x = ellip[,1], y = ellip[,2], z = ellip[,3])
+  return(ellip_df)
+}
 
-# Display the combined plot
-combined_plot
+
+# --- 3b) Parameter Evolution Visualization (During EM) ---
+param_plots_3d <- list()
+for (i in 1:length(res_3d$mu_history)) {
+  current_mu <- res_3d$mu_history[[i]]
+  current_sigma <- res_3d$sigma_history[[i]]
+  
+  # Base plot: data in grey
+  p_param <- plot_ly(x = data_3d[,1], y = data_3d[,2], z = data_3d[,3],
+                     type = "scatter3d", mode = "markers",
+                     marker = list(color = "gray", size = 2)) %>%
+    layout(title = paste("Parameter Evolution - Iteration", i))
+  
+  # Add each cluster's mean and ellipsoid
+  for (k in 1:K) {
+    # Add mean as a marker
+    p_param <- p_param %>% add_markers(x = current_mu[k, 1], y = current_mu[k, 2], z = current_mu[k, 3],
+                                       marker = list(color = ifelse(k == 1, "red", "blue"), size = 6),
+                                       name = paste("Mean", k))
+    # Compute ellipsoid points and add as semi-transparent markers
+    ellip_df <- ellipsoid_points(current_mu[k, ], current_sigma[[k]], level = 0.95, n = 20)
+    p_param <- p_param %>% add_markers(data = ellip_df, x = ~x, y = ~y, z = ~z,
+                                       marker = list(color = ifelse(k == 1, "red", "blue"),
+                                                     size = 2, opacity = 0.3),
+                                       showlegend = FALSE)
+  }
+  param_plots_3d[[i]] <- p_param
+}
+# Display the parameter evolution plot for the first iteration
+param_plots_3d[[1]]
+param_plots_3d[[5]]
 
 ```
 
 
-```{r}
-# Generate 3D data with K = 3 clusters
-d <- 3
-K <- 3
-n <- 300
-set.seed(123)
-data_info_3d <- generate_gaussian_mixture_data(n, d, K)
-data_3d <- data_info_3d$data
-
-# Initialize parameters using your existing function
-init_3d <- initialize_values(data_3d, nrow(data_3d), d, K)
-
-# Run the EM algorithm (using your existing EM_algorithm function)
-res_3d <- EM_algorithm(data_3d, init_3d$Pis, init_3d$Mus, init_3d$Sigmas, tol = 1e-4)
-
-# Assign each data point to the most probable cluster
-assigned_3d <- apply(res_3d$gamma, 1, which.max)
-
-# Create a data frame for plotting
-df_3d <- data.frame(
-  x = data_3d[,1],
-  y = data_3d[,2],
-  z = data_3d[,3],
-  cluster = factor(assigned_3d)
-)
-
-# Use plotly to create a 3D scatter plot with a legend
-library(plotly)
-
-plot_ly(data = df_3d,
-        x = ~x,
-        y = ~y,
-        z = ~z,
-        type = "scatter3d",
-        mode = "markers",
-        marker = list(size = 4),
-        color = ~cluster,
-        colors = c("red", "green", "blue")) %>%
-  layout(title = "3D Gaussian Mixture - EM Assigned Clusters",
-         scene = list(
-           xaxis = list(title = "X"),
-           yaxis = list(title = "Y"),
-           zaxis = list(title = "Z")
-         ))
-```
 
 ## Fotos
-
-
-### Lunar
-```{r}
-
-
-# Load Image
-img <- readImage("Melanoma.jpg")
-imageShow(img)
-```
-
 ```{r}
 library(OpenImageR)
 library(ggplot2)
@@ -677,30 +690,59 @@ segment_image_with_em <- function(image_path, K, tol = 10^-2, rgb = TRUE) {
   grid.arrange(original_plot, segmented_plot, ncol = 2)
 }
 
+
+
+```
+
+
+```{r}
 # Example call:
-segment_image_with_em("Melanoma.jpg", K = 2, tol = 1e-4, rgb = FALSE)
-
-```
-
-```{r}
-segment_image_with_em("Composition_A_Mondrian.jpg", K = 2, tol = 10^-6)
+segment_image_with_em("mar.jpg", K = 2, tol = 1e-3, rgb = FALSE)
 ```
 
 
 ```{r}
-# Example calls to segment different images
-
-#segment_image_with_em("Spaceship.jpg", K = 4, tol = 1e-2)
-
-
+segment_image_with_em("landscape.jpg", K = 3, tol = 10^-3)
 ```
 
 ```{r}
-segment_image_with_em("Stats.jpg", K = 4, tol = 1e-1)
+segment_image_with_em("landscape2.jpg", K = 3, tol = 10^-3)
 ```
+
 ```{r}
-segment_image_with_em("Locura3.jpg", K = 5, tol = 1e-4)
+segment_image_with_em("landscape3.jpg", K = 3, tol = 10^-3)
 ```
+
+
+### Patterns
+
+```{r}
+segment_image_with_em("ilusion.jpg", K = 2, tol = 10^-3)
+```
+
+```{r}
+segment_image_with_em("ilusion.jpg", K = 3, tol = 10^-2)
+```
+
+
+```{r}
+segment_image_with_em("patrones.jpg", K = 4, tol = 1e-1)
+```
+
+
+
+```{r}
+segment_image_with_em("frutas.jpg", K = 4, tol = 1e-2)
+```
+
+
+
+```{r}
+segment_image_with_em("Comida2.jpg", K = 4, tol = 1e-3)
+```
+
+
+
 
 
 
