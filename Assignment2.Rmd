@@ -50,10 +50,10 @@ initialize_values <- function(data, n, d, K) {
 
 
 ```
-We coded the function `initialize_values` to set up the initial parameters for our Gaussian mixture model. First, we invoke `set.seed(123)` to ensure reproducibility. Then, we define the mixing proportions $ \pi_k $ to be equal for all $ K $ components by using `rep(1/K, K)`. Next, we randomly select $ K $ points from the dataset as the initial means $ \mu_k $. Lastly, we compute the overall covariance matrix of the data with `cov(data)` and replicate it $ K $ times to obtain $ \Sigma_k $. The function then returns a list containing `Pis`, `Mus`, and `Sigmas`.
+We coded the function `initialize_values` to set up the initial parameters for our Gaussian mixture model. First, we invoke `set.seed(123)` to ensure reproducibility. Then, we define the mixing proportions $\pi_k$ to be equal for all $K$ components by using `rep(1/K, K)`. Next, we randomly select $K$ points from the dataset as the initial means $\mu_k$. Lastly, we compute the overall covariance matrix of the data with `cov(data)` and replicate it $K$ times to obtain $\Sigma_k$. The function then returns a list containing `Pis`, `Mus`, and `Sigmas`.
 
 
-Below is our explanation for the `convert_to_rgb` function. In this function, we transform a matrix of segmentation labels into a colored image. We coded it in R as follows:
+Below is our explanation for the `convert_to_rgb` function. In this function, we transform a matrix of segmentation labels into a colored image. We coded it as follows:
 ```{r convert_to_rgb}
 convert_to_rgb <- function(K, segmented_img) {
   # Generate K distinct colors using the rainbow palette
@@ -318,7 +318,9 @@ $$
 \Sigma_k = \frac{1}{N_k}\sum_{i=1}^{n} \gamma_{ik}\,(x_i - \mu_k)(x_i - \mu_k)^T.
 $$  
 
-To avoid singular matrices, we add a small constant $\epsilon=10^{-6}$ to the diagonal of each covariance matrix. After these updates, we recompute the density values using the updated parameters and calculate the new log-likelihood. The algorithm repeats this process until the absolute change in the log-likelihood falls below the specified tolerance $tol$, incrementing the iteration counter at each step and printing progress if `verbose` is enabled.
+To avoid singular matrices, we add a small constant $\epsilon=10^{-6}$ to the diagonal of each covariance matrix. We added this part after testing with some images. In a specific image that had large areas of the same exact color, at some point, the algorithm was giving a log-likelihood of $-\inf$ and crashing. We concluded that this was happening because as the algorithm converged, the pixels on the clusters were almost equal, giving covariance matrix close to 0.
+
+After these updates, we recompute the density values using the updated parameters and calculate the new log-likelihood. The algorithm repeats this process until the absolute change in the log-likelihood falls below the specified tolerance $tol$, incrementing the iteration counter at each step and printing progress if `verbose` is enabled.
 
 Once convergence is achieved, the function returns a list containing the total number of iterations, the final mixing proportions, means, and covariance matrices, as well as the final responsibilities. In addition, it returns the histories of $\gamma$, `mu`, and `sigma` from the first eight iterations, which are essential for later visualization of how the algorithm converged. This implementation allows us to monitor both the point-wise responsibilities and the evolution of the model parameters over the first few iterations, providing valuable insights into the behavior and convergence of our EM algorithm.
 
@@ -703,7 +705,6 @@ segment_image_with_em("patrones.jpg", K = 4, tol = 1e-1)
 /
 
 Next, we segment `patrones.jpg` with $K = 4$ and a tolerance of $1 \times 10^{-1}$. Because we use four clusters, the algorithm can separate multiple repeating patterns more distinctly, highlighting different textures or color regions in red, green, blue, and yellow. The relatively high tolerance makes the EM algorithm converge quickly, possibly at the expense of fine-grained distinctions, but still sufficient to capture the main visual features in the patterned image.
-
 
 
 
